@@ -68,9 +68,9 @@ Personal/company fields are nullable on `User` because they don't exist until on
 ## Onboarding Flow
 
 1. **Continue** (from the registration success screen, or via the onboarding gate below) → `/onboarding` page.
-2. Form with two sections, all fields mandatory:
-   - **Personal details**: first name, last name, department, position (free-text inputs; no fixed dropdown list for department/position in this phase).
-   - **Company details**: company name.
+2. Form with two sections, all fields mandatory, laid out as a single vertical column (one field per row, not a multi-column grid) with a placeholder example in every input:
+   - **Personal details**: first name (e.g. "Ada"), last name (e.g. "Lovelace"), department (e.g. "Engineering"), position (e.g. "Product manager") — free-text inputs, no fixed dropdown list in this phase.
+   - **Company details**: company name (e.g. "Acme inc").
 3. **Finish** → `POST /api/onboarding` → Zod-validates all fields are present and non-empty → looks up `Company` by case-insensitive exact match on the submitted name:
    - **Match found** → reuse that `Company`'s id (the user joins it).
    - **No match** → create a new `Company` row.
