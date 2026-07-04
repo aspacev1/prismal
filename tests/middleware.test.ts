@@ -24,4 +24,9 @@ describe("evaluateGate", () => {
   it("does not redirect a user with incomplete onboarding away from /onboarding itself", () => {
     expect(evaluateGate("/onboarding", { onboardingComplete: false })).toBeNull();
   });
+
+  it("does not redirect /api/onboarding for a user with incomplete onboarding (it's the endpoint that completes it)", () => {
+    expect(evaluateGate("/api/onboarding", { onboardingComplete: false })).toBeNull();
+    expect(evaluateGate("/api/onboarding", null)).toBeNull();
+  });
 });
