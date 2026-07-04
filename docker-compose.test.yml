@@ -1,0 +1,11 @@
+name: flowline-app
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowline
+      POSTGRES_PASSWORD: flowline
+      POSTGRES_DB: flowline_test
+    ports:
+      - "5433:5432"
