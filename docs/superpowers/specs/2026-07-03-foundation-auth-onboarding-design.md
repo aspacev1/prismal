@@ -62,9 +62,16 @@ Personal/company fields are nullable on `User` because they don't exist until on
 ## Registration Flow
 
 1. User submits the registration form (email, password).
-2. `POST /api/register` validates input with Zod (valid email format, password ≥ 8 chars), normalizes the email (lowercase + trim), checks uniqueness against the normalized value, hashes the password with bcrypt (cost factor 12), and creates the `User` row (`onboardingComplete: false`).
+2. `POST /api/register` validates input with Zod (valid email format, corporate email — see below, password ≥ 8 chars), normalizes the email (lowercase + trim), checks uniqueness against the normalized value, hashes the password with bcrypt (cost factor 12), and creates the `User` row (`onboardingComplete: false`).
 3. User is signed in immediately — no email verification step in this phase.
 4. Instead of redirecting straight into the app, the user sees an **"Account created successfully"** confirmation screen with a **Continue** button.
+
+### Corporate-email-only registration
+
+Free/consumer email providers (gmail.com, hotmail.com, yahoo.com, icloud.com, etc.) are rejected at registration — this is a corporate SaaS, not a consumer product, and free-provider signups are a poor signal for a real company account. The domain check uses the `free-email-domains` npm package (a maintained list of hundreds of free-email domains) rather than a hand-rolled list, since a short hardcoded list would miss most of them.
+
+- **Client-side**: the email field is validated live, on every keystroke, once the value contains `@`. If the domain matches a free-email provider, the field shows **"please use only corporate email"** immediately and the form cannot be submitted while the error is showing.
+- **Server-side**: the same check runs in the `registerSchema` Zod validation (never trust client-only validation) — a request with a free-email domain gets a 400 with the same message.
 
 ## Onboarding Flow
 
@@ -92,6 +99,7 @@ Any authenticated request to a protected route is checked against `onboardingCom
 ## Validation & Error Handling
 
 - Zod schemas for register, login, and onboarding payloads.
+- Free-email domain on register → field-level error ("please use only corporate email") — see [Corporate-email-only registration](#corporate-email-only-registration).
 - Duplicate email on register → clear field-level error ("an account with this email already exists").
 - Invalid login → generic **"invalid email or password"** message for both unknown-email and wrong-password cases, to avoid leaking which emails are registered.
 - Onboarding submit with missing/empty fields → field-level validation errors; submit is rejected until all fields are filled.
