@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import NextLink from "next/link";
 import { signIn } from "next-auth/react";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
+import MuiLink from "@mui/material/Link";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -78,7 +79,10 @@ export default function LoginPage() {
             </Button>
           </Box>
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 3 }}>
-            New here? <Link href="/register">Create an account</Link>
+            New here?{" "}
+            <MuiLink component={NextLink} href="/register" fontWeight={600}>
+              Create an account
+            </MuiLink>
           </Typography>
         </CardContent>
       </Card>
