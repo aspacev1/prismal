@@ -12,13 +12,17 @@ This phase delivers: user registration, login/logout, session handling, and a ma
 
 - **Next.js 14 (App Router) + TypeScript** — single full-stack codebase, no separate API server.
 - **Prisma ORM → Postgres**, schema-first, migrations tracked in git.
-- **Auth.js (NextAuth) v5** with a Credentials provider (email + password) and the Prisma adapter. Database-backed sessions (not JWT-only) so sessions can be revoked server-side later (e.g. "log out everywhere").
+- **Auth.js (NextAuth) v5** with a Credentials provider (email + password), **no adapter**. JWT sessions — Auth.js does not support database sessions with the Credentials provider (sign-in never goes through the adapter's session/account creation, so Auth.js forces JWT whenever Credentials is a provider). `onboardingComplete` and `companyId` are embedded in the JWT via the `jwt` callback and refreshed via Auth.js's `update()` trigger right after onboarding completes, so the token never goes stale before the next login.
 - **Docker** everywhere: a multi-stage `Dockerfile` (Next.js standalone output) and Compose files for both local dev and the external server deploy — see [Deployment](#deployment-docker) for why these are two files, not one.
 - **Reverse proxy: Caddy**, for automatic TLS on the external server. Terminates HTTPS and forwards to the `app` container over the Docker network.
 
-### Middleware runs on the Node.js runtime, not Edge
+### Middleware runs on the standard Edge runtime
 
-Next.js middleware defaults to the Edge runtime, which Prisma's Postgres driver doesn't support. Since our route protection (session check + onboarding gate) needs a DB-backed lookup, middleware is explicitly pinned to the Node.js runtime (`export const config = { runtime: 'nodejs', matcher: [...] }`). To avoid a *second* DB round-trip just for the onboarding flag, the Auth.js `session` callback attaches `onboardingComplete` (and `companyId`) onto `session.user` from the adapter-fetched `User` row — so the single session lookup middleware already has to do answers both "is this user authenticated" and "have they finished onboarding."
+Since session data lives entirely in the JWT (no DB lookup needed to read it), route protection (session check + onboarding gate) is plain Next.js middleware using Auth.js's `auth()` helper — no Node.js-runtime workaround and no Prisma access from middleware at all.
+
+### Known limitation: no server-side session revocation
+
+Because sessions are JWTs, there's no "log out everywhere" or server-side session kill switch in this phase — a token is valid until it expires or the client discards it. If forced revocation becomes a requirement later, it needs either a token blocklist (checked in the `jwt` callback) or a short-lived-access-token + refresh-token scheme. Not needed for phase 1; noted here so it isn't assumed to already work.
 
 ### Known tradeoff: Auth.js now, managed auth later
 
@@ -45,12 +49,9 @@ Company
 - name       String
 - createdAt  DateTime
 - @@index([name])   // supports the case-insensitive lookup on onboarding
-
-Session / Account / VerificationToken
-- standard Auth.js Prisma-adapter tables (Session used for DB-backed sessions;
-  VerificationToken exists because Auth.js requires it, but is unused in this
-  phase since email verification and password reset are deferred)
 ```
+
+No `Session` / `Account` / `VerificationToken` tables: those are Auth.js Prisma-adapter tables, and with Credentials-provider-only + JWT sessions there's no adapter in the picture, so nothing writes to them. The schema stays just `User` + `Company`. If an OAuth provider is added later, that's when an adapter (and these tables) would come back.
 
 Personal/company fields are nullable on `User` because they don't exist until onboarding is finished. `onboardingComplete` is the single source of truth for whether a user's profile is complete — no logic should infer completeness from the presence/absence of individual fields.
 
@@ -74,7 +75,7 @@ Personal/company fields are nullable on `User` because they don't exist until on
 3. **Finish** → `POST /api/onboarding` → Zod-validates all fields are present and non-empty → looks up `Company` by case-insensitive exact match on the submitted name:
    - **Match found** → reuse that `Company`'s id (the user joins it).
    - **No match** → create a new `Company` row.
-   → updates the `User` row (`firstName`, `lastName`, `department`, `position`, `companyId`) → sets `onboardingComplete = true` → redirects to `/workspace` (the personal workspace — specified in a later phase).
+   → updates the `User` row (`firstName`, `lastName`, `department`, `position`, `companyId`) → sets `onboardingComplete = true` → the client calls Auth.js's `update()` to refresh the JWT with the new `onboardingComplete`/`companyId` values (skipping this step would leave the old JWT in place and bounce the user straight back to `/onboarding` via the gate) → redirects to `/workspace` (the personal workspace — specified in a later phase).
 
 **Known simplification, flagged for phase 2:** joining an existing company only requires typing its exact name — there's no invite, approval, or ownership check. This is acceptable for phase 1 because no permissions or shared data hang off `Company` yet (it's just a label), but phase 2 (Teams & Projects) must replace this with a real invite/approval flow before `Company` membership grants access to anything.
 
@@ -84,9 +85,9 @@ Any authenticated request to a protected route is checked against `onboardingCom
 
 ## Login / Logout
 
-- **Login**: Auth.js Credentials provider normalizes the submitted email (lowercase + trim), looks up the user, verifies the password with `bcrypt.compare`, and creates a DB-backed session on success.
-- **Logout**: Auth.js `signOut()` destroys the DB session.
-- **Route protection**: Node.js-runtime middleware (see Architecture) enforces two gates in order, using `onboardingComplete` from the enriched session — no extra query: (1) authenticated at all → else redirect to `/login`; (2) `onboardingComplete` → else redirect to `/onboarding`.
+- **Login**: Auth.js Credentials provider normalizes the submitted email (lowercase + trim), looks up the user, verifies the password with `bcrypt.compare`, and on success returns the user object, which the `jwt` callback encodes into a signed JWT session cookie (including `onboardingComplete` and `companyId`).
+- **Logout**: Auth.js `signOut()` clears the session cookie. There's no server-side session row to delete (see the revocation limitation above).
+- **Route protection**: middleware (see Architecture) enforces two gates in order, reading `onboardingComplete` straight off the decoded JWT — no DB query at all: (1) authenticated at all → else redirect to `/login`; (2) `onboardingComplete` → else redirect to `/onboarding`.
 
 ## Validation & Error Handling
 
