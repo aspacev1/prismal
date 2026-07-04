@@ -1,6 +1,29 @@
 name: flowline-app
 
 services:
+  app:
+    image: flowline-app-dev
+    build:
+      context: .
+      target: dev
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # .env's DATABASE_URL points at "localhost" for host-side `npm run
+      # dev`/`npm test`. Inside this container, Postgres is reachable at
+      # the "postgres" service hostname instead — override it here rather
+      # than making .env wrong for the host-side case.
+      DATABASE_URL: postgresql://flowline:flowline@postgres:5432/flowline
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - postgres
+
   postgres:
     image: postgres:16-alpine
     environment:
