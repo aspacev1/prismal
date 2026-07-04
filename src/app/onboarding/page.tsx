@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import Box from "@mui/material/Box";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import Typography from "@mui/material/Typography";
+import TextField from "@mui/material/TextField";
+import Button from "@mui/material/Button";
 
 type FormState = {
   firstName: string;
@@ -19,6 +25,16 @@ const EMPTY_FORM: FormState = {
   position: "",
   companyName: "",
 };
+
+const FIELD_LABELS: Record<keyof FormState, string> = {
+  firstName: "First name",
+  lastName: "Last name",
+  department: "Department",
+  position: "Position",
+  companyName: "Company name",
+};
+
+const PERSONAL_FIELDS: (keyof FormState)[] = ["firstName", "lastName", "department", "position"];
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -59,63 +75,58 @@ export default function OnboardingPage() {
   }
 
   return (
-    <main>
-      <h1>Set up your profile</h1>
-      <p>All fields are required.</p>
-      <form onSubmit={handleSubmit}>
-        <p>Personal details</p>
+    <Box
+      sx={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: "background.default",
+        p: 2,
+      }}
+    >
+      <Card sx={{ width: 360 }}>
+        <CardContent sx={{ p: 4 }}>
+          <Typography variant="h5" component="h1" gutterBottom>
+            Set up your profile
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            All fields are required.
+          </Typography>
+          <Box component="form" onSubmit={handleSubmit} sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Typography variant="overline" color="primary.main">
+              Personal details
+            </Typography>
+            {PERSONAL_FIELDS.map((key) => (
+              <TextField
+                key={key}
+                label={FIELD_LABELS[key]}
+                placeholder={FIELD_LABELS[key]}
+                value={form[key]}
+                onChange={(e) => setField(key, e.target.value)}
+                error={Boolean(errors[key])}
+                helperText={errors[key] ?? " "}
+              />
+            ))}
 
-        <label htmlFor="firstName">First name</label>
-        <input
-          id="firstName"
-          placeholder="Ada"
-          value={form.firstName}
-          onChange={(e) => setField("firstName", e.target.value)}
-        />
-        {errors.firstName && <p role="alert">{errors.firstName}</p>}
+            <Typography variant="overline" color="primary.main">
+              Company details
+            </Typography>
+            <TextField
+              label={FIELD_LABELS.companyName}
+              placeholder={FIELD_LABELS.companyName}
+              value={form.companyName}
+              onChange={(e) => setField("companyName", e.target.value)}
+              error={Boolean(errors.companyName)}
+              helperText={errors.companyName ?? " "}
+            />
 
-        <label htmlFor="lastName">Last name</label>
-        <input
-          id="lastName"
-          placeholder="Lovelace"
-          value={form.lastName}
-          onChange={(e) => setField("lastName", e.target.value)}
-        />
-        {errors.lastName && <p role="alert">{errors.lastName}</p>}
-
-        <label htmlFor="department">Department</label>
-        <input
-          id="department"
-          placeholder="Engineering"
-          value={form.department}
-          onChange={(e) => setField("department", e.target.value)}
-        />
-        {errors.department && <p role="alert">{errors.department}</p>}
-
-        <label htmlFor="position">Position</label>
-        <input
-          id="position"
-          placeholder="Product manager"
-          value={form.position}
-          onChange={(e) => setField("position", e.target.value)}
-        />
-        {errors.position && <p role="alert">{errors.position}</p>}
-
-        <p>Company details</p>
-
-        <label htmlFor="companyName">Company name</label>
-        <input
-          id="companyName"
-          placeholder="Acme inc"
-          value={form.companyName}
-          onChange={(e) => setField("companyName", e.target.value)}
-        />
-        {errors.companyName && <p role="alert">{errors.companyName}</p>}
-
-        <button type="submit" disabled={submitting}>
-          Finish
-        </button>
-      </form>
-    </main>
+            <Button type="submit" variant="contained" size="large" disabled={submitting}>
+              Finish
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }
