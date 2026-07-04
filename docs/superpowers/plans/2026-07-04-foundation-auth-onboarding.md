@@ -22,7 +22,8 @@ package.json, tsconfig.json, next.config.mjs, next-env.d.ts, .gitignore
 prisma/schema.prisma
 src/lib/prisma.ts          - Prisma client singleton
 src/lib/password.ts        - bcrypt hash/verify
-src/lib/validation.ts      - normalizeEmail, registerSchema, onboardingSchema
+src/lib/validation.ts      - normalizeEmail, isCorporateEmail, registerSchema, onboardingSchema
+src/types/free-email-domains.d.ts - ambient module declaration (package ships no types)
 src/lib/origin.ts          - CSRF same-origin check for custom API routes
 src/lib/authenticateUser.ts - email+password lookup used by Auth.js authorize()
 src/auth.ts                - Auth.js config (Credentials provider, JWT callbacks)
@@ -70,7 +71,7 @@ Caddyfile
 ```bash
 cd /Users/aspacev/flowline
 npm init -y
-npm install next@14 react@18 react-dom@18 next-auth@beta @prisma/client bcryptjs zod
+npm install next@14 react@18 react-dom@18 next-auth@beta @prisma/client bcryptjs zod free-email-domains
 npm install -D typescript @types/node @types/react @types/react-dom @types/bcryptjs prisma vitest vite-tsconfig-paths dotenv-cli
 ```
 
@@ -454,19 +455,31 @@ git commit -m "Add password hashing utilities"
 
 ---
 
-### Task 4: Validation schemas
+### Task 4: Validation schemas (including corporate-email-only registration)
 
 **Files:**
+- Create: `src/types/free-email-domains.d.ts`
 - Create: `src/lib/validation.ts`
 - Test: `tests/lib/validation.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Declare types for the untyped `free-email-domains` package**
+
+`src/types/free-email-domains.d.ts`:
+
+```ts
+declare module "free-email-domains" {
+  const domains: string[];
+  export default domains;
+}
+```
+
+- [ ] **Step 2: Write the failing test**
 
 `tests/lib/validation.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { registerSchema, onboardingSchema, normalizeEmail } from "@/lib/validation";
+import { registerSchema, onboardingSchema, normalizeEmail, isCorporateEmail } from "@/lib/validation";
 
 describe("normalizeEmail", () => {
   it("lowercases and trims the email", () => {
@@ -474,9 +487,25 @@ describe("normalizeEmail", () => {
   });
 });
 
+describe("isCorporateEmail", () => {
+  it("rejects well-known free email providers", () => {
+    expect(isCorporateEmail("person@gmail.com")).toBe(false);
+    expect(isCorporateEmail("person@hotmail.com")).toBe(false);
+    expect(isCorporateEmail("person@yahoo.com")).toBe(false);
+  });
+
+  it("accepts a company domain", () => {
+    expect(isCorporateEmail("person@acme-corp.com")).toBe(true);
+  });
+
+  it("is case-insensitive on the domain", () => {
+    expect(isCorporateEmail("Person@GMAIL.com")).toBe(false);
+  });
+});
+
 describe("registerSchema", () => {
-  it("accepts a valid email and an 8+ character password", () => {
-    const result = registerSchema.safeParse({ email: "user@example.com", password: "longenough" });
+  it("accepts a valid corporate email and an 8+ character password", () => {
+    const result = registerSchema.safeParse({ email: "user@acme-corp.com", password: "longenough" });
     expect(result.success).toBe(true);
   });
 
@@ -485,16 +514,24 @@ describe("registerSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a free-email-provider address with the corporate-only message", () => {
+    const result = registerSchema.safeParse({ email: "user@gmail.com", password: "longenough" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe("please use only corporate email");
+    }
+  });
+
   it("rejects a password shorter than 8 characters", () => {
-    const result = registerSchema.safeParse({ email: "user@example.com", password: "short" });
+    const result = registerSchema.safeParse({ email: "user@acme-corp.com", password: "short" });
     expect(result.success).toBe(false);
   });
 
   it("normalizes email casing and whitespace", () => {
-    const result = registerSchema.safeParse({ email: "  User@Example.COM  ", password: "longenough" });
+    const result = registerSchema.safeParse({ email: "  User@Acme-Corp.COM  ", password: "longenough" });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.email).toBe("user@example.com");
+      expect(result.data.email).toBe("user@acme-corp.com");
     }
   });
 });
@@ -522,25 +559,37 @@ describe("onboardingSchema", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Run the test to verify it fails**
 
 Run: `npm test -- tests/lib/validation.test.ts`
 Expected: FAIL — `Cannot find module '@/lib/validation'`
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Implement**
 
 `src/lib/validation.ts`:
 
 ```ts
 import { z } from "zod";
+import freeEmailDomains from "free-email-domains";
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+export function isCorporateEmail(email: string): boolean {
+  const domain = normalizeEmail(email).split("@")[1];
+  if (!domain) return false;
+  return !freeEmailDomains.includes(domain);
+}
+
 export const registerSchema = z.object({
-  email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(8),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Enter a valid email address.")
+    .refine(isCorporateEmail, { message: "please use only corporate email" }),
+  password: z.string().min(8, "Password must be at least 8 characters."),
 });
 
 export const onboardingSchema = z.object({
@@ -555,16 +604,16 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 export type OnboardingInput = z.infer<typeof onboardingSchema>;
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- tests/lib/validation.test.ts`
-Expected: PASS (9 tests)
+Expected: PASS (13 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/lib/validation.ts tests/lib/validation.test.ts
-git commit -m "Add register/onboarding validation schemas"
+git add src/types/free-email-domains.d.ts src/lib/validation.ts tests/lib/validation.test.ts
+git commit -m "Add register/onboarding validation schemas with corporate-email-only check"
 ```
 
 ---
@@ -890,6 +939,16 @@ describe("POST /api/register", () => {
     expect(response.status).toBe(400);
   });
 
+  it("rejects a free-email-provider address with the corporate-only message", async () => {
+    const response = await POST(makeRequest({ email: "person@gmail.com", password: "longenough" }));
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBe("please use only corporate email");
+
+    const user = await prisma.user.findUnique({ where: { email: "person@gmail.com" } });
+    expect(user).toBeNull();
+  });
+
   it("rejects a mismatched origin", async () => {
     const response = await POST(
       makeRequest({ email: "csrf@example.com", password: "longenough" }, "http://evil.example.com")
@@ -922,10 +981,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const parsed = registerSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Enter a valid email and a password with at least 8 characters." },
-      { status: 400 }
-    );
+    const message = parsed.error.issues[0]?.message ?? "Enter a valid email and password.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const { email, password } = parsed.data;
@@ -945,7 +1002,7 @@ export async function POST(request: NextRequest) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- tests/api/register.test.ts`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1332,7 +1389,7 @@ export default function HomePage() {
 }
 ```
 
-- [ ] **Step 3: Register page**
+- [ ] **Step 3: Register page (live corporate-email validation on every keystroke)**
 
 `src/app/register/page.tsx`:
 
@@ -1341,16 +1398,29 @@ export default function HomePage() {
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { isCorporateEmail } from "@/lib/validation";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  function handleEmailChange(value: string) {
+    setEmail(value);
+    if (value.includes("@") && !isCorporateEmail(value)) {
+      setEmailError("please use only corporate email");
+    } else {
+      setEmailError(null);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (emailError) return;
+
     setSubmitting(true);
     setError(null);
 
@@ -1382,9 +1452,10 @@ export default function RegisterPage() {
           type="email"
           placeholder="name@company.com"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => handleEmailChange(e.target.value)}
           required
         />
+        {emailError && <p role="alert">{emailError}</p>}
         <label htmlFor="password">Password</label>
         <input
           id="password"
@@ -1395,7 +1466,7 @@ export default function RegisterPage() {
           required
         />
         {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
+        <button type="submit" disabled={submitting || Boolean(emailError)}>
           Create account
         </button>
       </form>
@@ -1651,10 +1722,11 @@ npm run dev
 
 In a browser:
 1. Visit `http://localhost:3000` → redirected to `/login` (no session yet).
-2. Go to `/register`, submit a new email + 8+ char password → redirected to `/register/success`.
-3. Click **Continue** → `/onboarding`, fields are stacked vertically with placeholders. Click **Finish** with empty fields → inline "This field is required." errors appear and you stay on the page. Fill all fields, click **Finish** → redirected to `/workspace`.
-4. Click **Log out** → redirected to `/login`.
-5. Log back in with the same email/password → redirected straight to `/workspace` (onboarding not re-shown, since it's already complete).
+2. Go to `/register`, type `someone@gmail.com` in the email field → as soon as `@gmail.com` is typed, "please use only corporate email" appears under the field and **Create account** is disabled. Clear it and type a non-free domain (e.g. `someone@acme-corp.com`) → the error disappears and the button re-enables.
+3. Submit that corporate email + an 8+ char password → redirected to `/register/success`.
+4. Click **Continue** → `/onboarding`, fields are stacked vertically with placeholders. Click **Finish** with empty fields → inline "This field is required." errors appear and you stay on the page. Fill all fields, click **Finish** → redirected to `/workspace`.
+5. Click **Log out** → redirected to `/login`.
+6. Log back in with the same email/password → redirected straight to `/workspace` (onboarding not re-shown, since it's already complete).
 
 Stop the dev server (Ctrl+C) when done.
 
