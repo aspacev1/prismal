@@ -19,31 +19,55 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "All fields are required." }, { status: 400 });
   }
 
-  const { firstName, lastName, department, position, companyName } = parsed.data;
+  const { firstName, lastName, department, position, companyName, inviteToken } = parsed.data;
 
-  // Interim guard until Task 9 adds the inviteToken branch (which will let
-  // invited users skip company name entirely) — for now this still requires
-  // it on every submission, same as before companyName became schema-optional.
-  if (!companyName) {
-    return NextResponse.json({ error: "All fields are required." }, { status: 400 });
+  let companyId: string | null = null;
+  let projectIdToJoin: string | null = null;
+
+  if (inviteToken) {
+    const invite = await prisma.projectInviteLink.findUnique({
+      where: { token: inviteToken },
+      include: { project: { include: { createdBy: true } } },
+    });
+    if (invite && invite.project.createdBy.companyId) {
+      companyId = invite.project.createdBy.companyId;
+      projectIdToJoin = invite.projectId;
+    }
   }
 
-  const existingCompany = await prisma.company.findFirst({
-    where: { name: { equals: companyName, mode: "insensitive" } },
-  });
-  const company = existingCompany ?? (await prisma.company.create({ data: { name: companyName } }));
+  if (!companyId) {
+    if (!companyName || !companyName.trim()) {
+      return NextResponse.json({ error: "All fields are required." }, { status: 400 });
+    }
 
-  await prisma.user.update({
-    where: { id: session.user.id },
-    data: {
-      firstName,
-      lastName,
-      department,
-      position,
-      companyId: company.id,
-      onboardingComplete: true,
-    },
+    const existingCompany = await prisma.company.findFirst({
+      where: { name: { equals: companyName, mode: "insensitive" } },
+    });
+    const company = existingCompany ?? (await prisma.company.create({ data: { name: companyName } }));
+    companyId = company.id;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: session.user.id },
+      data: {
+        firstName,
+        lastName,
+        department,
+        position,
+        companyId,
+        onboardingComplete: true,
+      },
+    });
+
+    if (projectIdToJoin) {
+      await tx.projectMember.upsert({
+        where: { projectId_userId: { projectId: projectIdToJoin, userId: session.user.id } },
+        create: { projectId: projectIdToJoin, userId: session.user.id },
+        update: {},
+      });
+    }
   });
 
-  return NextResponse.json({ companyId: company.id }, { status: 200 });
+  return NextResponse.json({ companyId, projectId: projectIdToJoin }, { status: 200 });
 }
