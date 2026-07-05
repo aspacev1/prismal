@@ -14,7 +14,8 @@ const PUBLIC_PATHS = [
   "/api/register",
   "/api/onboarding",
   "/api/health",
-  "/invite",
+  "/invite", // the landing page only — do NOT add "/api/invite" here, see
+  // src/app/api/invite/[token]/accept/route.ts for why that route stays gated
 ];
 
 function isPublicPath(pathname: string): boolean {
