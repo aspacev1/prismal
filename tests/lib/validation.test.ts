@@ -90,17 +90,16 @@ describe("createProjectSchema", () => {
     expect(createProjectSchema.safeParse({ name: "Website relaunch" }).success).toBe(true);
   });
 
-  it("accepts a name with a description", () => {
-    const result = createProjectSchema.safeParse({ name: "Website relaunch", description: "Redesign" });
-    expect(result.success).toBe(true);
-  });
-
   it("rejects an empty name", () => {
     expect(createProjectSchema.safeParse({ name: "" }).success).toBe(false);
   });
 
   it("rejects a missing name", () => {
-    expect(createProjectSchema.safeParse({ description: "no name" }).success).toBe(false);
+    expect(createProjectSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("rejects extra fields", () => {
+    expect(createProjectSchema.safeParse({ name: "Website relaunch", description: "Redesign" }).success).toBe(false);
   });
 });
 

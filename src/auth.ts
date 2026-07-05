@@ -23,6 +23,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.onboardingComplete = (user as { onboardingComplete: boolean }).onboardingComplete;
         token.companyId = (user as { companyId: string | null }).companyId ?? null;
+        token.firstName = (user as { firstName?: string }).firstName ?? null;
+        token.lastName = (user as { lastName?: string }).lastName ?? null;
       }
       if (trigger === "update" && session) {
         if (typeof session.onboardingComplete === "boolean") {
@@ -38,6 +40,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.id = token.sub as string;
       session.user.onboardingComplete = Boolean(token.onboardingComplete);
       session.user.companyId = (token.companyId as string | null) ?? null;
+      session.user.firstName = (token.firstName as string | null) ?? null;
+      session.user.lastName = (token.lastName as string | null) ?? null;
       return session;
     },
   },

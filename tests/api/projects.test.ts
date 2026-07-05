@@ -47,7 +47,7 @@ describe("POST /api/projects", () => {
   it("rejects a missing name", async () => {
     const user = await createOnboardedUser("owner1@acme-corp.com");
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id, companyId: user.companyId } } as never);
-    const response = await POST(makeRequest("POST", { description: "no name" }));
+    const response = await POST(makeRequest("POST", {}));
     expect(response.status).toBe(400);
   });
 
@@ -55,7 +55,7 @@ describe("POST /api/projects", () => {
     const user = await createOnboardedUser("owner2@acme-corp.com");
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id, companyId: user.companyId } } as never);
 
-    const response = await POST(makeRequest("POST", { name: "Website relaunch", description: "Redesign" }));
+    const response = await POST(makeRequest("POST", { name: "Website relaunch" }));
     expect(response.status).toBe(201);
     const body = await response.json();
 

@@ -6,7 +6,7 @@ services:
     build:
       context: .
       target: dev
-    command: npm run dev
+    command: sh -c "npx prisma generate && npm run dev"
     ports:
       - "3000:3000"
     env_file:

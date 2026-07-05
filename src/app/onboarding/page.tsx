@@ -115,19 +115,33 @@ function OnboardingForm() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: "background.default",
+        background: "linear-gradient(135deg, #F0F9F7 0%, #F8F9FB 50%, #F0F4FF 100%)",
         p: 2,
       }}
     >
-      <Card sx={{ width: 360 }}>
-        <CardContent sx={{ p: 4 }}>
-          <Typography variant="h5" component="h1" gutterBottom>
-            Set up your profile
+      <Card
+        sx={{
+          width: 400,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.08)",
+          border: "1px solid rgba(15,157,140,0.10)",
+        }}
+      >
+        <CardContent sx={{ p: 5 }}>
+          <Typography
+            variant="h4"
+            sx={{
+              background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              mb: 0.5,
+            }}
+          >
+            flowline
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
             All fields are required.
           </Typography>
-          <Box component="form" onSubmit={handleSubmit} sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <Box component="form" onSubmit={handleSubmit} sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
             <Typography variant="overline" color="primary.main">
               Personal details
             </Typography>
@@ -145,7 +159,7 @@ function OnboardingForm() {
 
             {!inviteToken && (
               <>
-                <Typography variant="overline" color="primary.main">
+                <Typography variant="overline" color="primary.main" sx={{ mt: 1 }}>
                   Company details
                 </Typography>
                 <TextField
@@ -159,9 +173,9 @@ function OnboardingForm() {
               </>
             )}
 
-            {error && <Alert severity="error">{error}</Alert>}
+            {error && <Alert severity="error" sx={{ borderRadius: 2 }}>{error}</Alert>}
 
-            <Button type="submit" variant="contained" size="large" disabled={submitting}>
+            <Button type="submit" variant="contained" size="large" disabled={submitting} fullWidth>
               Finish
             </Button>
           </Box>

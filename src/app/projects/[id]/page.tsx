@@ -1,12 +1,9 @@
 import { notFound } from "next/navigation";
 import Box from "@mui/material/Box";
-import Card from "@mui/material/Card";
-import CardContent from "@mui/material/CardContent";
-import Typography from "@mui/material/Typography";
-import Avatar from "@mui/material/Avatar";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import InvitePanel from "./InvitePanel";
+import AppHeader from "../../AppHeader";
+import ProjectTabs from "./ProjectTabs";
 
 export default async function ProjectPage({ params }: { params: { id: string } }) {
   const session = await auth();
@@ -18,42 +15,41 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const project = await prisma.project.findUnique({
     where: { id: params.id },
-    include: { members: { include: { user: true } } },
+    include: {
+      members: {
+        include: { user: true },
+        orderBy: { createdAt: "asc" },
+      },
+      inviteLink: true,
+    },
   });
   if (!project) notFound();
 
+  const members = project.members.map((m) => ({
+    id: m.id,
+    userId: m.userId,
+    blocked: m.blocked,
+    firstName: m.user.firstName ?? "",
+    lastName: m.user.lastName ?? "",
+    email: m.user.email,
+    department: m.user.department ?? "",
+    position: m.user.position ?? "",
+    isCurrentUser: m.userId === session!.user.id,
+  }));
+
   return (
-    <Box sx={{ minHeight: "100vh", bgcolor: "background.default", p: 3 }}>
-      <Box sx={{ maxWidth: 640, mx: "auto" }}>
-        <Typography variant="h5" fontWeight={700} gutterBottom>
-          {project.name}
-        </Typography>
-        {project.description && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            {project.description}
-          </Typography>
-        )}
-
-        <Card sx={{ mb: 2 }}>
-          <CardContent>
-            <Typography variant="overline" color="primary.main">
-              Members
-            </Typography>
-            {project.members.map((member) => (
-              <Box key={member.id} sx={{ display: "flex", alignItems: "center", gap: 1.5, mt: 1 }}>
-                <Avatar sx={{ width: 30, height: 30, bgcolor: "#DFF5F2", color: "primary.main", fontSize: 13, fontWeight: 700 }}>
-                  {member.user.firstName?.[0]?.toUpperCase() ?? "?"}
-                </Avatar>
-                <Typography variant="body2">
-                  {member.user.firstName} {member.user.lastName}
-                  {member.userId === session!.user.id ? " (you)" : ""}
-                </Typography>
-              </Box>
-            ))}
-          </CardContent>
-        </Card>
-
-        <InvitePanel projectId={project.id} />
+    <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
+      <AppHeader projectName={project.name} projectId={project.id} projectColor={project.color ?? undefined} />
+      <Box sx={{ p: 4 }}>
+        <Box sx={{ maxWidth: 800, mx: "auto" }}>
+          <ProjectTabs
+            projectId={project.id}
+            projectName={project.name}
+            projectColor={project.color ?? ""}
+            inviteUrl={project.inviteLink ? `/invite/${project.inviteLink.token}` : null}
+            members={members}
+          />
+        </Box>
       </Box>
     </Box>
   );

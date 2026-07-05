@@ -8,6 +8,9 @@ import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import SendIcon from "@mui/icons-material/Send";
+import CheckIcon from "@mui/icons-material/Check";
 
 export default function InvitePanel({ projectId }: { projectId: string }) {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -69,23 +72,39 @@ export default function InvitePanel({ projectId }: { projectId: string }) {
   }
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="overline" color="primary.main">
+    <Card
+      sx={{
+        boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
+        border: "1px solid rgba(0,0,0,0.06)",
+      }}
+    >
+      <CardContent sx={{ p: 3 }}>
+        <Typography variant="overline" color="primary.main" sx={{ mb: 2, display: "block" }}>
           Invite teammates
         </Typography>
 
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 0.5 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           Shareable link
         </Typography>
-        <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
-          <TextField value={inviteUrl ?? "Loading..."} InputProps={{ readOnly: true }} size="small" fullWidth />
-          <Button variant="outlined" onClick={handleCopy} disabled={!inviteUrl}>
+        <Box sx={{ display: "flex", gap: 1, mb: 3 }}>
+          <TextField
+            value={inviteUrl ?? "Loading..."}
+            InputProps={{ readOnly: true }}
+            size="small"
+            fullWidth
+          />
+          <Button
+            variant="outlined"
+            onClick={handleCopy}
+            disabled={!inviteUrl}
+            startIcon={copied ? <CheckIcon /> : <ContentCopyIcon />}
+            sx={{ flexShrink: 0 }}
+          >
             {copied ? "Copied" : "Copy"}
           </Button>
         </Box>
 
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           Or invite by email
         </Typography>
         <Box component="form" onSubmit={handleSend} sx={{ display: "flex", gap: 1 }}>
@@ -96,17 +115,23 @@ export default function InvitePanel({ projectId }: { projectId: string }) {
             size="small"
             fullWidth
           />
-          <Button type="submit" variant="contained" disabled={sending || !emails.trim()}>
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={sending || !emails.trim()}
+            startIcon={<SendIcon />}
+            sx={{ flexShrink: 0 }}
+          >
             Send
           </Button>
         </Box>
         {error && (
-          <Alert severity="error" sx={{ mt: 1 }}>
+          <Alert severity="error" sx={{ mt: 2, borderRadius: 2 }}>
             {error}
           </Alert>
         )}
         {sendResult && (
-          <Alert severity="success" sx={{ mt: 1 }}>
+          <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>
             {sendResult}
           </Alert>
         )}

@@ -41,7 +41,8 @@ model Company {
 model Project {
   id          String             @id @default(cuid())
   name        String
-  description String?
+  imageUrl    String?
+  color       String?
   createdById String
   createdBy   User               @relation(fields: [createdById], references: [id])
   companyId   String?
@@ -60,6 +61,7 @@ model ProjectMember {
   project   Project  @relation(fields: [projectId], references: [id])
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+  blocked   Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@unique([projectId, userId])

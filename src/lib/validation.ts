@@ -29,14 +29,27 @@ export const onboardingSchema = z.object({
 
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1),
-  description: z.string().trim().optional(),
-});
+}).strict();
 
 export const inviteEmailListSchema = z.object({
   emails: z.array(emailSchema).min(1),
+});
+
+export const updateProjectSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color.").optional().nullable(),
+  imageUrl: z.string().url().optional().nullable(),
+}).strict();
+
+export const updateMemberSchema = z.object({
+  blocked: z.boolean().optional(),
+  department: z.string().trim().min(1).optional(),
+  resetPassword: z.string().min(8).optional(),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type OnboardingInput = z.infer<typeof onboardingSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type InviteEmailListInput = z.infer<typeof inviteEmailListSchema>;
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+export type UpdateMemberInput = z.infer<typeof updateMemberSchema>;

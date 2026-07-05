@@ -20,13 +20,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { name, description } = parsed.data;
+  const { name } = parsed.data;
 
   const project = await prisma.$transaction(async (tx) => {
     const created = await tx.project.create({
       data: {
         name,
-        description: description || null,
         createdById: session.user.id,
         companyId: session.user.companyId,
       },
@@ -58,7 +57,6 @@ export async function GET() {
   const projects = memberships.map(({ project }) => ({
     id: project.id,
     name: project.name,
-    description: project.description,
     memberCount: project._count.members,
   }));
 

@@ -4,7 +4,7 @@ import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
-import CheckIcon from "@mui/icons-material/Check";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 
 export default function RegisterSuccessPage({
   searchParams,
@@ -22,35 +22,41 @@ export default function RegisterSuccessPage({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: "background.default",
+        background: "linear-gradient(135deg, #F0F9F7 0%, #F8F9FB 50%, #F0F4FF 100%)",
         p: 2,
       }}
     >
-      <Card sx={{ width: 360, textAlign: "center" }}>
-        <CardContent sx={{ p: 4 }}>
+      <Card
+        sx={{
+          width: 380,
+          textAlign: "center",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.08)",
+          border: "1px solid rgba(15,157,140,0.10)",
+        }}
+      >
+        <CardContent sx={{ p: 5 }}>
           <Box
             sx={{
-              width: 52,
-              height: 52,
+              width: 64,
+              height: 64,
               borderRadius: "50%",
-              bgcolor: "#DFF5F2",
-              color: "primary.main",
+              background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               mx: "auto",
-              mb: 2,
+              mb: 3,
             }}
           >
-            <CheckIcon />
+            <CheckCircleOutlineIcon sx={{ color: "#fff", fontSize: 32 }} />
           </Box>
-          <Typography variant="h6" component="h1" gutterBottom>
+          <Typography variant="h5" fontWeight={700} gutterBottom>
             Account created
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
             Next, set up your profile and company.
           </Typography>
-          <Button component={Link} href={onboardingHref} variant="contained" size="large">
+          <Button component={Link} href={onboardingHref} variant="contained" size="large" fullWidth>
             Continue
           </Button>
         </CardContent>
