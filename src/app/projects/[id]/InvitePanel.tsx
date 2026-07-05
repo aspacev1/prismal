@@ -19,8 +19,12 @@ export default function InvitePanel({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     fetch(`/api/projects/${projectId}/invite-link`)
-      .then((res) => res.json())
-      .then((body) => setInviteUrl(body.url));
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Couldn't load the invite link.");
+        return res.json();
+      })
+      .then((body) => setInviteUrl(body.url))
+      .catch(() => setError("Couldn't load the invite link. Try refreshing the page."));
   }, [projectId]);
 
   async function handleCopy() {
