@@ -40,6 +40,13 @@ export async function POST(request: NextRequest) {
   }
 
   if (!companyId) {
+    if (inviteToken && (!companyName || !companyName.trim())) {
+      return NextResponse.json(
+        { error: "This invite link is no longer valid. Please enter your company name instead.", invalidInviteToken: true },
+        { status: 400 }
+      );
+    }
+
     if (!companyName || !companyName.trim()) {
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }

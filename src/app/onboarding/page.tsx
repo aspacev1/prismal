@@ -40,7 +40,8 @@ const PERSONAL_FIELDS: (keyof FormState)[] = ["firstName", "lastName", "departme
 function OnboardingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const inviteToken = searchParams.get("inviteToken");
+  const [tokenInvalid, setTokenInvalid] = useState(false);
+  const inviteToken = tokenInvalid ? null : searchParams.get("inviteToken");
   const { update } = useSession();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
@@ -91,6 +92,9 @@ function OnboardingForm() {
       } else {
         const body = await response.json().catch(() => ({ error: "Something went wrong." }));
         setError(body.error ?? "Something went wrong.");
+        if (body.invalidInviteToken) {
+          setTokenInvalid(true);
+        }
       }
       return;
     }
