@@ -3,6 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { assertSameOrigin } from "@/lib/origin";
 import { auth } from "@/auth";
 
+// No explicit onboardingComplete check here on purpose — this route is only
+// ever reached by an already-onboarded user (middleware's default gate
+// redirects anyone else to /onboarding before this handler runs, since
+// neither "/invite" nor "/api/invite" is a public path). If a future change
+// ever adds a broader "/api/invite" prefix to PUBLIC_PATHS, that protection
+// disappears silently — keep this route's exposure in mind if that happens.
 export async function POST(request: NextRequest, { params }: { params: { token: string } }) {
   const originError = assertSameOrigin(request);
   if (originError) return originError;
