@@ -29,6 +29,10 @@ export async function POST(request: NextRequest) {
       where: { token: inviteToken },
       include: { project: { include: { createdBy: true } } },
     });
+    // invite.project.createdBy.companyId is guaranteed non-null in practice —
+    // Project creation requires onboardingComplete (which only ever sets
+    // companyId, never clears it) — this null-check is defense-in-depth
+    // against a state the system can't currently produce, not a live case.
     if (invite && invite.project.createdBy.companyId) {
       companyId = invite.project.createdBy.companyId;
       projectIdToJoin = invite.projectId;
