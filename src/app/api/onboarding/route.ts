@@ -21,6 +21,9 @@ export async function POST(request: NextRequest) {
 
   const { firstName, lastName, department, position, companyName } = parsed.data;
 
+  // Interim guard until Task 9 adds the inviteToken branch (which will let
+  // invited users skip company name entirely) — for now this still requires
+  // it on every submission, same as before companyName became schema-optional.
   if (!companyName) {
     return NextResponse.json({ error: "All fields are required." }, { status: 400 });
   }
