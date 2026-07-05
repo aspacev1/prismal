@@ -16,7 +16,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const parsed = createProjectSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Project name is required." }, { status: 400 });
+    const message = parsed.error.issues[0]?.message ?? "Project name is required.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const { name, description } = parsed.data;
@@ -47,7 +48,7 @@ export async function GET() {
 
   const memberships = await prisma.projectMember.findMany({
     where: { userId: session.user.id },
-    include: { project: { include: { members: true } } },
+    include: { project: { include: { _count: { select: { members: true } } } } },
     orderBy: { createdAt: "desc" },
   });
 
@@ -55,7 +56,7 @@ export async function GET() {
     id: project.id,
     name: project.name,
     description: project.description,
-    memberCount: project.members.length,
+    memberCount: project._count.members,
   }));
 
   return NextResponse.json({ projects });
