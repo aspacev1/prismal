@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import NextLink from "next/link";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
@@ -11,11 +11,12 @@ import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import Alert from "@mui/material/Alert";
-import MuiLink from "@mui/material/Link";
 import { isCorporateEmail } from "@/lib/validation";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("inviteToken");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -52,9 +53,15 @@ export default function RegisterPage() {
       return;
     }
 
-    await signIn("credentials", { email, password, redirect: false });
+    const signInResult = await signIn("credentials", { email, password, redirect: false });
 
-    router.push("/register/success");
+    if (signInResult?.error) {
+      setError("Account created, but automatic sign-in failed. Please log in.");
+      router.push("/login");
+      return;
+    }
+
+    router.push(inviteToken ? `/register/success?inviteToken=${inviteToken}` : "/register/success");
   }
 
   return (
@@ -101,13 +108,18 @@ export default function RegisterPage() {
             </Button>
           </Box>
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 3 }}>
-            Already have an account?{" "}
-            <MuiLink component={NextLink} href="/login" fontWeight={600}>
-              Log in
-            </MuiLink>
+            Already have an account? <Link href="/login">Log in</Link>
           </Typography>
         </CardContent>
       </Card>
     </Box>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   );
 }

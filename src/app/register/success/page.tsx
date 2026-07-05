@@ -6,7 +6,15 @@ import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import CheckIcon from "@mui/icons-material/Check";
 
-export default function RegisterSuccessPage() {
+export default function RegisterSuccessPage({
+  searchParams,
+}: {
+  searchParams: { inviteToken?: string };
+}) {
+  const onboardingHref = searchParams.inviteToken
+    ? `/onboarding?inviteToken=${searchParams.inviteToken}`
+    : "/onboarding";
+
   return (
     <Box
       sx={{
@@ -42,7 +50,7 @@ export default function RegisterSuccessPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
             Next, set up your profile and company.
           </Typography>
-          <Button component={Link} href="/onboarding" variant="contained" size="large">
+          <Button component={Link} href={onboardingHref} variant="contained" size="large">
             Continue
           </Button>
         </CardContent>

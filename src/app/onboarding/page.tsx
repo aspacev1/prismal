@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
@@ -9,6 +9,7 @@ import CardContent from "@mui/material/CardContent";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
+import Alert from "@mui/material/Alert";
 
 type FormState = {
   firstName: string;
@@ -36,11 +37,14 @@ const FIELD_LABELS: Record<keyof FormState, string> = {
 
 const PERSONAL_FIELDS: (keyof FormState)[] = ["firstName", "lastName", "department", "position"];
 
-export default function OnboardingPage() {
+function OnboardingForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("inviteToken");
   const { update } = useSession();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   function setField(name: keyof FormState, value: string) {
@@ -51,27 +55,53 @@ export default function OnboardingPage() {
     e.preventDefault();
     setSubmitting(true);
     setErrors({});
+    setError(null);
+
+    const payload: Record<string, string> = {
+      firstName: form.firstName,
+      lastName: form.lastName,
+      department: form.department,
+      position: form.position,
+    };
+    if (inviteToken) {
+      payload.inviteToken = inviteToken;
+    } else {
+      payload.companyName = form.companyName;
+    }
 
     const response = await fetch("/api/onboarding", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify(payload),
     });
 
     setSubmitting(false);
 
     if (!response.ok) {
-      const nextErrors: Partial<Record<keyof FormState, string>> = {};
-      (Object.keys(form) as (keyof FormState)[]).forEach((key) => {
-        if (!form[key].trim()) nextErrors[key] = "This field is required.";
-      });
-      setErrors(nextErrors);
+      const requiredFields: (keyof FormState)[] = inviteToken
+        ? PERSONAL_FIELDS
+        : [...PERSONAL_FIELDS, "companyName"];
+      const missingFields = requiredFields.filter((key) => !form[key].trim());
+      if (missingFields.length > 0) {
+        const nextErrors: Partial<Record<keyof FormState, string>> = {};
+        missingFields.forEach((key) => {
+          nextErrors[key] = "This field is required.";
+        });
+        setErrors(nextErrors);
+      } else {
+        const body = await response.json().catch(() => ({ error: "Something went wrong." }));
+        setError(body.error ?? "Something went wrong.");
+      }
       return;
     }
 
-    const body = await response.json();
+    const body = await response.json().catch(() => null);
+    if (!body) {
+      setError("Something went wrong. Please try again.");
+      return;
+    }
     await update({ onboardingComplete: true, companyId: body.companyId });
-    router.push("/workspace");
+    router.push(body.projectId ? `/projects/${body.projectId}` : "/workspace");
   }
 
   return (
@@ -109,17 +139,23 @@ export default function OnboardingPage() {
               />
             ))}
 
-            <Typography variant="overline" color="primary.main">
-              Company details
-            </Typography>
-            <TextField
-              label={FIELD_LABELS.companyName}
-              placeholder={FIELD_LABELS.companyName}
-              value={form.companyName}
-              onChange={(e) => setField("companyName", e.target.value)}
-              error={Boolean(errors.companyName)}
-              helperText={errors.companyName ?? " "}
-            />
+            {!inviteToken && (
+              <>
+                <Typography variant="overline" color="primary.main">
+                  Company details
+                </Typography>
+                <TextField
+                  label={FIELD_LABELS.companyName}
+                  placeholder={FIELD_LABELS.companyName}
+                  value={form.companyName}
+                  onChange={(e) => setField("companyName", e.target.value)}
+                  error={Boolean(errors.companyName)}
+                  helperText={errors.companyName ?? " "}
+                />
+              </>
+            )}
+
+            {error && <Alert severity="error">{error}</Alert>}
 
             <Button type="submit" variant="contained" size="large" disabled={submitting}>
               Finish
@@ -128,5 +164,13 @@ export default function OnboardingPage() {
         </CardContent>
       </Card>
     </Box>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingForm />
+    </Suspense>
   );
 }
