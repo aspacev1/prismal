@@ -47,9 +47,13 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const inviteUrl = `${request.nextUrl.origin}/invite/${link.token}`;
   const inviterName = `${inviter.firstName} ${inviter.lastName}`;
 
-  for (const email of parsed.data.emails) {
-    await sendInviteEmail(email, project.name, inviterName, inviteUrl);
-  }
+  // allSettled — one address failing (bad domain, Resend rate limit, a
+  // transient network blip) must not silently drop the rest of the batch
+  // or turn into an opaque 500 after the invite link was already created.
+  const results = await Promise.allSettled(
+    parsed.data.emails.map((email) => sendInviteEmail(email, project.name, inviterName, inviteUrl))
+  );
+  const failed = parsed.data.emails.filter((_, i) => results[i].status === "rejected");
 
-  return NextResponse.json({ sent: parsed.data.emails.length });
+  return NextResponse.json({ sent: parsed.data.emails.length - failed.length, failed });
 }

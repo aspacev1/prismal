@@ -85,6 +85,29 @@ describe("POST /api/projects/[id]/invite-email", () => {
     expect(vi.mocked(sendInviteEmail).mock.calls[0][2]).toBe("Grace Hopper");
   });
 
+  it("reports partial failure instead of a bare 500 when one address fails to send", async () => {
+    const owner = await createOnboardedUser("owner4@acme-corp.com");
+    const project = await prisma.project.create({
+      data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
+    });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
+
+    vi.mocked(sendInviteEmail)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Resend rate limited"));
+
+    const response = await POST(
+      makeRequest(project.id, { emails: ["ok@gmail.com", "broken@gmail.com"] }),
+      { params: { id: project.id } }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.sent).toBe(1);
+    expect(body.failed).toEqual(["broken@gmail.com"]);
+  });
+
   it("rejects a non-member", async () => {
     const owner = await createOnboardedUser("owner3@acme-corp.com");
     const outsider = await createOnboardedUser("outsider@acme-corp.com");
