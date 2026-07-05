@@ -40,6 +40,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ id: project.id }, { status: 201 });
 }
 
+// Not currently called by the UI — /workspace queries Prisma directly as a
+// Server Component instead (simpler, no extra HTTP round-trip). Kept for a
+// future consumer (e.g. a client-side refresh action or external API use).
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
