@@ -21,14 +21,57 @@ model User {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  createdProjects    Project[]
+  projectMemberships ProjectMember[]
+  createdInviteLinks ProjectInviteLink[]
+
   @@index([companyId])
 }
 
 model Company {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   users     User[]
+  projects  Project[]
 
   @@index([name])
+}
+
+model Project {
+  id          String             @id @default(cuid())
+  name        String
+  description String?
+  createdById String
+  createdBy   User               @relation(fields: [createdById], references: [id])
+  companyId   String?
+  company     Company?           @relation(fields: [companyId], references: [id])
+  createdAt   DateTime           @default(now())
+  members     ProjectMember[]
+  inviteLink  ProjectInviteLink?
+
+  @@index([createdById])
+  @@index([companyId])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectInviteLink {
+  id          String   @id @default(cuid())
+  projectId   String   @unique
+  project     Project  @relation(fields: [projectId], references: [id])
+  token       String   @unique
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
 }
