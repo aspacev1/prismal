@@ -21,6 +21,10 @@ export async function POST(request: NextRequest) {
 
   const { firstName, lastName, department, position, companyName } = parsed.data;
 
+  if (!companyName) {
+    return NextResponse.json({ error: "All fields are required." }, { status: 400 });
+  }
+
   const existingCompany = await prisma.company.findFirst({
     where: { name: { equals: companyName, mode: "insensitive" } },
   });

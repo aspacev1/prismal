@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { registerSchema, onboardingSchema, normalizeEmail, isCorporateEmail } from "@/lib/validation";
+import {
+  registerSchema,
+  onboardingSchema,
+  normalizeEmail,
+  isCorporateEmail,
+  createProjectSchema,
+  inviteEmailListSchema,
+} from "@/lib/validation";
 
 describe("normalizeEmail", () => {
   it("lowercases and trims the email", () => {
@@ -76,4 +83,62 @@ describe("onboardingSchema", () => {
       expect(result.success).toBe(false);
     }
   );
+});
+
+describe("createProjectSchema", () => {
+  it("accepts a name-only project", () => {
+    expect(createProjectSchema.safeParse({ name: "Website relaunch" }).success).toBe(true);
+  });
+
+  it("accepts a name with a description", () => {
+    const result = createProjectSchema.safeParse({ name: "Website relaunch", description: "Redesign" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty name", () => {
+    expect(createProjectSchema.safeParse({ name: "" }).success).toBe(false);
+  });
+
+  it("rejects a missing name", () => {
+    expect(createProjectSchema.safeParse({ description: "no name" }).success).toBe(false);
+  });
+});
+
+describe("inviteEmailListSchema", () => {
+  it("accepts a list of valid emails, does not require them to be corporate", () => {
+    const result = inviteEmailListSchema.safeParse({ emails: ["person@gmail.com", "someone@acme-corp.com"] });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty list", () => {
+    expect(inviteEmailListSchema.safeParse({ emails: [] }).success).toBe(false);
+  });
+
+  it("rejects a list containing an invalid email", () => {
+    expect(inviteEmailListSchema.safeParse({ emails: ["not-an-email"] }).success).toBe(false);
+  });
+});
+
+describe("onboardingSchema with invite support", () => {
+  it("still accepts the normal shape (companyName, no inviteToken)", () => {
+    const result = onboardingSchema.safeParse({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      department: "Engineering",
+      position: "Product manager",
+      companyName: "Acme inc",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an inviteToken with no companyName", () => {
+    const result = onboardingSchema.safeParse({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      department: "Engineering",
+      position: "Product manager",
+      inviteToken: "some-token",
+    });
+    expect(result.success).toBe(true);
+  });
 });
