@@ -74,4 +74,28 @@ describe("GET /api/projects/[id]/invite-link", () => {
     const links = await prisma.projectInviteLink.findMany({ where: { projectId: project.id } });
     expect(links).toHaveLength(1);
   });
+
+  it("handles concurrent requests for the same project without colliding on the unique constraint", async () => {
+    const owner = await createOnboardedUser("owner3@acme-corp.com");
+    const project = await prisma.project.create({
+      data: { name: "X", createdById: owner.id, companyId: owner.companyId },
+    });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
+
+    const [first, second] = await Promise.all([
+      GET(makeRequest(project.id), { params: { id: project.id } }),
+      GET(makeRequest(project.id), { params: { id: project.id } }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+
+    const firstBody = await first.json();
+    const secondBody = await second.json();
+    expect(firstBody.token).toBe(secondBody.token);
+
+    const links = await prisma.projectInviteLink.findMany({ where: { projectId: project.id } });
+    expect(links).toHaveLength(1);
+  });
 });

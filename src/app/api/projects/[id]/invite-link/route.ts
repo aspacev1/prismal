@@ -16,12 +16,14 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
   }
 
-  let link = await prisma.projectInviteLink.findUnique({ where: { projectId: params.id } });
-  if (!link) {
-    link = await prisma.projectInviteLink.create({
-      data: { projectId: params.id, token: generateInviteToken(), createdById: session.user.id },
-    });
-  }
+  // upsert (not findUnique-then-create) — two concurrent requests for the
+  // same project must not both try to insert and collide on the unique
+  // projectId constraint.
+  const link = await prisma.projectInviteLink.upsert({
+    where: { projectId: params.id },
+    create: { projectId: params.id, token: generateInviteToken(), createdById: session.user.id },
+    update: {},
+  });
 
   return NextResponse.json({ token: link.token, url: `${request.nextUrl.origin}/invite/${link.token}` });
 }
