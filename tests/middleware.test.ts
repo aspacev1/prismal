@@ -29,4 +29,10 @@ describe("evaluateGate", () => {
     expect(evaluateGate("/api/onboarding", { onboardingComplete: false })).toBeNull();
     expect(evaluateGate("/api/onboarding", null)).toBeNull();
   });
+
+  it("allows /invite/{token} through regardless of session state", () => {
+    expect(evaluateGate("/invite/abc123", null)).toBeNull();
+    expect(evaluateGate("/invite/abc123", { onboardingComplete: false })).toBeNull();
+    expect(evaluateGate("/invite/abc123", { onboardingComplete: true })).toBeNull();
+  });
 });

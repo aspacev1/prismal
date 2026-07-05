@@ -14,6 +14,7 @@ const PUBLIC_PATHS = [
   "/api/register",
   "/api/onboarding",
   "/api/health",
+  "/invite",
 ];
 
 function isPublicPath(pathname: string): boolean {
