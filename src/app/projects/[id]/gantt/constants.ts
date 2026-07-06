@@ -33,6 +33,26 @@ export const STATUSES: Record<TaskStatus, { label: string; fill: string; textCol
   archived: { label: "Archived", fill: "#D5D9E0", textColor: "#677692" },
 };
 
+// Task/subtask Gantt bars now render as the brand gradient at an opacity
+// reflecting status, replacing per-status bar color as the status signal.
+// `delayed`/`blocked` are exceptions (not points on a progress ladder) and
+// always render fully opaque so they visually demand attention regardless
+// of actual progress — see docs/superpowers/specs/2026-07-06-roadmap-brand-alignment-design.md.
+export const STATUS_BAR_OPACITY: Record<TaskStatus, number> = {
+  todo: 0.25,
+  in_progress: 0.5,
+  in_review: 0.7,
+  delayed: 1,
+  blocked: 1,
+  completed: 1,
+  archived: 0.15,
+};
+
+// Statuses that are exceptions rather than progress stages — these keep a
+// small StatusDot on the bar itself (in addition to full opacity) since
+// opacity alone can't distinguish "delayed" from "completed" at 1.0.
+export const EXCEPTION_STATUSES: TaskStatus[] = ["delayed", "blocked"];
+
 export const STATUS_LIST: TaskStatus[] = [
   "todo",
   "in_progress",
