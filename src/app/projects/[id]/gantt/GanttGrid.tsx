@@ -342,14 +342,14 @@ export default function GanttGrid({
               markerHeight="7"
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#0F9D8C" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#2D6EEF" />
             </marker>
           </defs>
           {displayRows.flatMap((row) =>
             (row.deps || []).map((dep) => {
               const depIdx = rowIndexById[dep.predecessorId];
               const toIdx = rowIndexById[row.id];
-              const color = "#0F9D8C";
+              const color = "#2D6EEF";
               // Both endpoints visible → draw the curve
               if (depIdx !== undefined && toIdx !== undefined) {
                 const depRow = displayRows[depIdx];
@@ -582,8 +582,8 @@ export default function GanttGrid({
                     height: barHeight,
                     borderRadius: 1,
                     cursor: "pointer",
-                    bgcolor: "rgba(144,97,249,0.18)",
-                    border: "1.5px solid #9061F9",
+                    bgcolor: "rgba(91,99,214,0.18)",
+                    border: "1.5px solid #5B63D6",
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
@@ -604,7 +604,7 @@ export default function GanttGrid({
                       left: 0,
                       bottom: 0,
                       width: `${rollup?.progress ?? 0}%`,
-                      bgcolor: "#9061F9",
+                      bgcolor: "#5B63D6",
                       opacity: 0.5,
                       pointerEvents: "none",
                       transition: "width 0.3s ease",
