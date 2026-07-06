@@ -108,6 +108,27 @@ describe("POST /api/projects/[id]/invite-email", () => {
     expect(body.failed).toEqual(["broken@gmail.com"]);
   });
 
+  it("returns 500 when every email send fails", async () => {
+    const owner = await createOnboardedUser("owner5@acme-corp.com");
+    const project = await prisma.project.create({
+      data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
+    });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
+
+    vi.mocked(sendInviteEmail).mockRejectedValue(new Error("invalid_api_key"));
+
+    const response = await POST(
+      makeRequest(project.id, { emails: ["a@gmail.com", "b@gmail.com"] }),
+      { params: { id: project.id } }
+    );
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toMatch(/Failed to send/i);
+    expect(body.failed).toEqual(["a@gmail.com", "b@gmail.com"]);
+  });
+
   it("rejects a non-member", async () => {
     const owner = await createOnboardedUser("owner3@acme-corp.com");
     const outsider = await createOnboardedUser("outsider@acme-corp.com");

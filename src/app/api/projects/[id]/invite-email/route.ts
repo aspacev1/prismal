@@ -44,7 +44,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     update: {},
   });
 
-  const inviteUrl = `${request.nextUrl.origin}/invite/${link.token}`;
+  const inviteUrl = `${process.env.DOMAIN ?? request.nextUrl.origin}/invite/${link.token}`;
   const inviterName = `${inviter.firstName} ${inviter.lastName}`;
 
   // allSettled — one address failing (bad domain, Resend rate limit, a
@@ -53,7 +53,23 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const results = await Promise.allSettled(
     parsed.data.emails.map((email) => sendInviteEmail(email, project.name, inviterName, inviteUrl))
   );
-  const failed = parsed.data.emails.filter((_, i) => results[i].status === "rejected");
+
+  const failed: string[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === "rejected") {
+      console.error(`[invite-email] send to ${parsed.data.emails[i]} failed:`, r.reason);
+      failed.push(parsed.data.emails[i]);
+    }
+  }
+
+  // Hard error when every send failed — no silent green banner.
+  if (failed.length === parsed.data.emails.length) {
+    return NextResponse.json(
+      { error: "Failed to send invite emails. Check server logs for details.", failed },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({ sent: parsed.data.emails.length - failed.length, failed });
 }

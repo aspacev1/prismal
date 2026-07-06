@@ -1,0 +1,1 @@
+ALTER TABLE "TaskHistory" ADD COLUMN IF NOT EXISTS "reason" TEXT;

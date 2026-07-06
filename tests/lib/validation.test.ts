@@ -6,6 +6,8 @@ import {
   isCorporateEmail,
   createProjectSchema,
   inviteEmailListSchema,
+  createTaskSchema,
+  updateTaskSchema,
 } from "@/lib/validation";
 
 describe("normalizeEmail", () => {
@@ -139,5 +141,47 @@ describe("onboardingSchema with invite support", () => {
       inviteToken: "some-token",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("createTaskSchema — kind field", () => {
+  it("defaults kind to 'task' when omitted", () => {
+    const result = createTaskSchema.safeParse({ name: "Do something" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBeUndefined();
+    }
+  });
+
+  it("accepts kind: 'category'", () => {
+    const result = createTaskSchema.safeParse({ name: "Phase 1", kind: "category" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts kind: 'task'", () => {
+    const result = createTaskSchema.safeParse({ name: "A task", kind: "task" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown kind value", () => {
+    const result = createTaskSchema.safeParse({ name: "X", kind: "epic" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("updateTaskSchema — kind field", () => {
+  it("accepts kind: 'category' on update", () => {
+    const result = updateTaskSchema.safeParse({ kind: "category" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts kind: 'task' on update", () => {
+    const result = updateTaskSchema.safeParse({ kind: "task" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown kind value on update", () => {
+    const result = updateTaskSchema.safeParse({ kind: "milestone" });
+    expect(result.success).toBe(false);
   });
 });

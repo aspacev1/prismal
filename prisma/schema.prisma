@@ -15,6 +15,7 @@ model User {
   lastName           String?
   department         String?
   position           String?
+  avatarColor        String?  @default("#4F5DFF")
   onboardingComplete Boolean  @default(false)
   companyId          String?
   company            Company? @relation(fields: [companyId], references: [id])
@@ -24,6 +25,9 @@ model User {
   createdProjects    Project[]
   projectMemberships ProjectMember[]
   createdInviteLinks ProjectInviteLink[]
+  taskHistory        TaskHistory[]
+  createdTasks       Task[]
+  commentAuthor      TaskComment[]
 
   @@index([companyId])
 }
@@ -43,6 +47,8 @@ model Project {
   name        String
   imageUrl    String?
   color       String?
+  startDate   DateTime?
+  endDate     DateTime?
   createdById String
   createdBy   User               @relation(fields: [createdById], references: [id])
   companyId   String?
@@ -50,19 +56,21 @@ model Project {
   createdAt   DateTime           @default(now())
   members     ProjectMember[]
   inviteLink  ProjectInviteLink?
+  tasks       Task[]
 
   @@index([createdById])
   @@index([companyId])
 }
 
 model ProjectMember {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id])
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  blocked   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id])
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  blocked       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  assignedTasks Task[]
 
   @@unique([projectId, userId])
   @@index([userId])
@@ -76,4 +84,84 @@ model ProjectInviteLink {
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
+}
+
+model Task {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  kind            String   @default("task")
+  startDate       DateTime?
+  durationDays    Int      @default(1)
+  originalEndDate DateTime?
+  originalDurationDays Int @default(0)
+  loggedHours     Float    @default(0)
+  progress        Int      @default(0)
+  status          String   @default("todo")
+  priority        String   @default("medium")
+  order           Int      @default(0)
+  color           String?
+  isMilestone     Boolean  @default(false)
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentId        String?
+  parent          Task?    @relation("TaskHierarchy", fields: [parentId], references: [id])
+  children        Task[]   @relation("TaskHierarchy")
+  assigneeId      String?
+  assignee        ProjectMember? @relation(fields: [assigneeId], references: [id])
+  createdById     String?
+  createdBy       User?    @relation(fields: [createdById], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  predecessorDeps TaskDependency[] @relation("PredecessorDeps")
+  successorDeps   TaskDependency[] @relation("SuccessorDeps")
+  history         TaskHistory[]
+  comments        TaskComment[]
+
+  @@index([projectId])
+  @@index([parentId])
+  @@index([assigneeId])
+  @@index([order])
+}
+
+model TaskDependency {
+  id             String   @id @default(cuid())
+  predecessorId  String
+  predecessor    Task     @relation("PredecessorDeps", fields: [predecessorId], references: [id], onDelete: Cascade)
+  successorId    String
+  successor      Task     @relation("SuccessorDeps", fields: [successorId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@unique([predecessorId, successorId])
+  @@index([successorId])
+}
+
+model TaskHistory {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  field       String
+  oldValue    String?
+  newValue    String?
+  reason      String?
+  changedById String
+  changedBy   User     @relation(fields: [changedById], references: [id])
+  changedAt   DateTime @default(now())
+
+  @@index([taskId, changedAt])
+}
+
+model TaskComment {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  body        String
+  mentions    String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([taskId, createdAt])
 }

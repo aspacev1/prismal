@@ -1,0 +1,1 @@
+ALTER TABLE "TaskDependency" DROP COLUMN IF EXISTS "dependencyType";

@@ -34,6 +34,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     email: m.user.email,
     department: m.user.department ?? "",
     position: m.user.position ?? "",
+    avatarColor: m.user.avatarColor ?? null,
     isCurrentUser: m.userId === session!.user.id,
   }));
 
@@ -41,11 +42,12 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
       <AppHeader projectName={project.name} projectId={project.id} projectColor={project.color ?? undefined} />
       <Box sx={{ p: 4 }}>
-        <Box sx={{ maxWidth: 800, mx: "auto" }}>
+        <Box sx={{ maxWidth: 1200, mx: "auto" }}>
           <ProjectTabs
             projectId={project.id}
             projectName={project.name}
             projectColor={project.color ?? ""}
+            projectStartDate={project.startDate ? project.startDate.toISOString() : null}
             inviteUrl={project.inviteLink ? `/invite/${project.inviteLink.token}` : null}
             members={members}
           />

@@ -16,6 +16,7 @@ export type MemberData = {
   email: string;
   department: string;
   position: string;
+  avatarColor: string | null;
   isCurrentUser: boolean;
 };
 
@@ -23,12 +24,14 @@ export default function ProjectTabs({
   projectId,
   projectName,
   projectColor,
+  projectStartDate,
   inviteUrl,
   members,
 }: {
   projectId: string;
   projectName: string;
   projectColor: string;
+  projectStartDate: string | null;
   inviteUrl: string | null;
   members: MemberData[];
 }) {
@@ -45,11 +48,12 @@ export default function ProjectTabs({
           "& .MuiTab-root": { textTransform: "none", fontWeight: 600, fontSize: "0.9rem", px: 3 },
         }}
       >
-        <Tab label="Project Details" />
         <Tab label="Roadmap" />
+        <Tab label="Project Details" />
       </Tabs>
 
-      {tab === 0 && (
+      {tab === 0 && <RoadmapTab projectId={projectId} projectName={projectName} projectStartDate={projectStartDate} members={members} />}
+      {tab === 1 && (
         <ProjectDetailsTab
           projectId={projectId}
           projectName={projectName}
@@ -58,7 +62,6 @@ export default function ProjectTabs({
           members={members}
         />
       )}
-      {tab === 1 && <RoadmapTab projectId={projectId} projectName={projectName} />}
     </Box>
   );
 }

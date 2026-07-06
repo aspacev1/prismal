@@ -64,7 +64,11 @@ export default function InvitePanel({ projectId }: { projectId: string }) {
 
     const body = await response.json();
     setEmails("");
-    if (body.failed && body.failed.length > 0) {
+    if (body.sent === 0 || (body.failed && body.failed.length > 0 && body.sent === 0)) {
+      // All sends failed but the response was still 2xx (defensive — the route
+      // now returns 500 in this case, but guard against regressions).
+      setError(`Failed to send to: ${body.failed?.join(", ") ?? "all recipients"}.`);
+    } else if (body.failed && body.failed.length > 0) {
       setSendResult(`Sent, but failed for: ${body.failed.join(", ")}`);
     } else {
       setSendResult("Invites sent.");
