@@ -30,7 +30,7 @@ export default async function WorkspacePage() {
   const projects = memberships.map((m) => m.project);
 
   function projectIconGradient(color?: string | null) {
-    const c = color || "#0F9D8C";
+    const c = color || "#2D6EEF";
     return `linear-gradient(135deg, ${c} 0%, ${c}88 100%)`;
   }
 
@@ -46,7 +46,7 @@ export default async function WorkspacePage() {
                 width: 80,
                 height: 80,
                 borderRadius: "50%",
-                background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
+                background: "linear-gradient(135deg, #3D7EFF 0%, #1CC8E0 100%)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -55,7 +55,7 @@ export default async function WorkspacePage() {
                 opacity: 0.15,
               }}
             >
-              <FolderOutlinedIcon sx={{ fontSize: 40, color: "#0F9D8C" }} />
+              <FolderOutlinedIcon sx={{ fontSize: 40, color: "#2D6EEF" }} />
             </Box>
             <Typography variant="h5" fontWeight={700} gutterBottom>
               Start your first project
@@ -118,7 +118,7 @@ export default async function WorkspacePage() {
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                     <AvatarGroup max={3} sx={{ "& .MuiAvatar-root": { width: 28, height: 28, fontSize: 12 } }}>
                       {project.members.map((m) => (
-                        <Avatar key={m.id} sx={{ bgcolor: "#DFF5F2", color: "primary.main", fontWeight: 700 }}>
+                        <Avatar key={m.id} sx={{ bgcolor: "#E4ECFD", color: "primary.main", fontWeight: 700 }}>
                           {m.user.firstName?.[0]?.toUpperCase() ?? "?"}
                         </Avatar>
                       ))}
