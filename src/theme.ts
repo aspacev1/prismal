@@ -15,6 +15,10 @@ declare module "@mui/material/styles" {
   }
 }
 
+// `button` is a deepened version of `brand` (not the same gradient) because
+// the bright brand gradient fails white-text contrast at its cyan end —
+// see docs/superpowers/specs/2026-07-06-brand-palette-refresh-design.md
+// for the full contrast analysis behind this split.
 const LIGHT_GRADIENT = {
   brand: "linear-gradient(135deg, #3D7EFF 0%, #1CC8E0 100%)",
   button: "linear-gradient(135deg, #2D6EEF 0%, #0FA9C0 100%)",
