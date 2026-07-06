@@ -124,13 +124,19 @@ export function createAppTheme(mode: "light" | "dark"): Theme {
             padding: "10px 20px",
             transition: "all 0.2s ease",
           },
-          contained: {
+          contained: ({ ownerState }) => ({
             boxShadow: "0 2px 8px rgba(45,110,239,0.25)",
+            // Only primary (the default) gets the brand gradient — other
+            // colors (e.g. the destructive "error" delete-confirm button)
+            // must keep their flat palette color, not the brand gradient.
+            ...((ownerState.color ?? "primary") === "primary" && {
+              background: LIGHT_GRADIENT.button,
+            }),
             "&:hover": {
               boxShadow: "0 4px 16px rgba(45,110,239,0.35)",
               transform: "translateY(-1px)",
             },
-          },
+          }),
           outlined: {
             borderWidth: 1.5,
             "&:hover": {
