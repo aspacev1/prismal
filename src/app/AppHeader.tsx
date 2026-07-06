@@ -76,8 +76,8 @@ export default function AppHeader({
           sx={{
             color: isActive("/workspace") ? "primary.main" : "text.secondary",
             fontWeight: isActive("/workspace") ? 700 : 500,
-            bgcolor: isActive("/workspace") ? "rgba(15,157,140,0.08)" : "transparent",
-            "&:hover": { bgcolor: "rgba(15,157,140,0.06)" },
+            bgcolor: isActive("/workspace") ? "rgba(45,110,239,0.08)" : "transparent",
+            "&:hover": { bgcolor: "rgba(45,110,239,0.06)" },
           }}
         >
           My Projects
@@ -91,8 +91,8 @@ export default function AppHeader({
               ml: 1,
               color: isActive(`/projects/${projectId}`) ? "primary.main" : "text.secondary",
               fontWeight: isActive(`/projects/${projectId}`) ? 700 : 500,
-              bgcolor: isActive(`/projects/${projectId}`) ? "rgba(15,157,140,0.08)" : "transparent",
-              "&:hover": { bgcolor: "rgba(15,157,140,0.06)" },
+              bgcolor: isActive(`/projects/${projectId}`) ? "rgba(45,110,239,0.08)" : "transparent",
+              "&:hover": { bgcolor: "rgba(45,110,239,0.06)" },
             }}
             startIcon={
               projectColor ? (

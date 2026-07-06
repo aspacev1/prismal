@@ -63,7 +63,7 @@ export default function ChangePasswordPage() {
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default" }}>
       <AppHeader />
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", p: 2, pt: 8 }}>
-        <Card sx={{ width: 380, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", border: "1px solid rgba(15,157,140,0.10)" }}>
+        <Card sx={{ width: 380, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", border: "1px solid rgba(45,110,239,0.10)" }}>
           <CardContent sx={{ p: 5 }}>
             <Typography variant="h5" fontWeight={700} gutterBottom>
               Change password

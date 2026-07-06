@@ -394,7 +394,7 @@ function SortableRow({
           bgcolor: isSelected
             ? "rgba(79,93,255,0.08)"
             : isCategory
-              ? "rgba(144,97,249,0.06)"
+              ? "rgba(91,99,214,0.06)"
               : "background.paper",
           borderLeft: isCategory ? "3px solid #5B63D6" : "3px solid transparent",
           "&:hover": {

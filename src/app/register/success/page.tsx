@@ -31,7 +31,7 @@ export default function RegisterSuccessPage({
           width: 380,
           textAlign: "center",
           boxShadow: "0 8px 32px rgba(0,0,0,0.08)",
-          border: "1px solid rgba(15,157,140,0.10)",
+          border: "1px solid rgba(45,110,239,0.10)",
         }}
       >
         <CardContent sx={{ p: 5 }}>

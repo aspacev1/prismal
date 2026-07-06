@@ -535,7 +535,7 @@ export default function GanttGrid({
                 height: rowHeights[i],
                 borderBottom: "1px solid",
                 borderColor: "divider",
-                bgcolor: isCategory ? "rgba(144,97,249,0.04)" : "transparent",
+                bgcolor: isCategory ? "rgba(91,99,214,0.04)" : "transparent",
               }}
             >
               {/* Left-of-bar avatar + priority (not for categories) */}

@@ -86,7 +86,7 @@ export default async function WorkspacePage() {
                   "&:hover": {
                     boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
                     transform: "translateY(-2px)",
-                    borderColor: "rgba(15,157,140,0.25)",
+                    borderColor: "rgba(45,110,239,0.25)",
                   },
                 }}
               >

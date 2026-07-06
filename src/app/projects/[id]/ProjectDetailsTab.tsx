@@ -349,7 +349,7 @@ export default function ProjectDetailsTab({
                     px: 2,
                     borderRadius: 2,
                     bgcolor: member.isCurrentUser
-                      ? "rgba(15,157,140,0.06)"
+                      ? "rgba(45,110,239,0.06)"
                       : member.blocked
                         ? "rgba(239,68,68,0.05)"
                         : "transparent",
