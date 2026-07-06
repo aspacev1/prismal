@@ -28,9 +28,9 @@ import BusinessIcon from "@mui/icons-material/Business";
 import { MemberData } from "./ProjectTabs";
 
 const PRESET_COLORS = [
-  "#0F9D8C", "#6C5CE7", "#E17055", "#00B894",
+  "#2D6EEF", "#5B63D6", "#E17055", "#00B894",
   "#0984E3", "#FDCB6E", "#E84393", "#636E72",
-  "#2D3436", "#D63031", "#00CEC9", "#A29BFE",
+  "#2D3436", "#D63031", "#00CEC9", "#989DE5",
 ];
 
 export default function ProjectDetailsTab({
@@ -47,7 +47,7 @@ export default function ProjectDetailsTab({
   members: MemberData[];
 }) {
   const [name, setName] = useState(initialName);
-  const [color, setColor] = useState(initialColor || "#0F9D8C");
+  const [color, setColor] = useState(initialColor || "#2D6EEF");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -362,7 +362,7 @@ export default function ProjectDetailsTab({
                       sx={{
                         width: 36,
                         height: 36,
-                        bgcolor: member.blocked ? "rgba(0,0,0,0.08)" : "#DFF5F2",
+                        bgcolor: member.blocked ? "rgba(0,0,0,0.08)" : "#E4ECFD",
                         color: member.blocked ? "text.secondary" : "primary.main",
                         fontWeight: 700,
                         fontSize: 14,
