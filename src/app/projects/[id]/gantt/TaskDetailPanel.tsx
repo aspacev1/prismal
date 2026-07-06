@@ -518,7 +518,7 @@ export default function TaskDetailPanel({
                           color: "text.secondary",
                         }}
                       >
-                        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#0F9D8C", flexShrink: 0 }} />
+                        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "#2D6EEF", flexShrink: 0 }} />
                         <Typography sx={{ fontSize: 11, fontWeight: 500 }} noWrap>
                           {depRow ? depRow.name : "Unknown task"}
                         </Typography>
