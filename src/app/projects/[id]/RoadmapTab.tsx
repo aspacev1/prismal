@@ -717,7 +717,7 @@ export default function RoadmapTab({
             "&:hover .row-add": { opacity: 1 },
             cursor: "pointer",
             bgcolor: task.kind === "category" ? "rgba(0,0,0,0.03)" : "transparent",
-            borderLeft: task.kind === "category" ? "3px solid #9061F9" : "3px solid transparent",
+            borderLeft: task.kind === "category" ? "3px solid #5B63D6" : "3px solid transparent",
           }}
           onClick={() => setSelectedId(task.id)}
         >
