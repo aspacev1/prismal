@@ -44,7 +44,7 @@ export default async function ProjectStartPage({ params }: { params: { id: strin
                   width: 72,
                   height: 72,
                   borderRadius: "50%",
-                  background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
+                  background: "linear-gradient(135deg, #3D7EFF 0%, #1CC8E0 100%)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -53,7 +53,7 @@ export default async function ProjectStartPage({ params }: { params: { id: strin
                   opacity: 0.15,
                 }}
               >
-                <CalendarTodayIcon sx={{ fontSize: 32, color: "#0F9D8C" }} />
+                <CalendarTodayIcon sx={{ fontSize: 32, color: "#2D6EEF" }} />
               </Box>
               <Typography variant="h6" fontWeight={700} gutterBottom>
                 Gantt chart coming soon
