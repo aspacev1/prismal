@@ -396,7 +396,7 @@ function SortableRow({
             : isCategory
               ? "rgba(144,97,249,0.06)"
               : "background.paper",
-          borderLeft: isCategory ? "3px solid #9061F9" : "3px solid transparent",
+          borderLeft: isCategory ? "3px solid #5B63D6" : "3px solid transparent",
           "&:hover": {
             bgcolor: isSelected ? "rgba(79,93,255,0.12)" : "rgba(0,0,0,0.04)",
           },
@@ -539,7 +539,7 @@ function SortableRow({
                 sx={{
                   width: `${rollupsByCategory[row.id]?.progress ?? 0}%`,
                   height: "100%",
-                  bgcolor: "#9061F9",
+                  bgcolor: "#5B63D6",
                   borderRadius: 2,
                   transition: "width 0.3s ease",
                 }}
