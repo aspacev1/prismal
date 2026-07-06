@@ -59,7 +59,7 @@ export default function LoginPage() {
           <Typography
             variant="h4"
             sx={{
-              background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
+              background: "linear-gradient(135deg, #3D7EFF 0%, #1CC8E0 100%)",
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               mb: 0.5,
