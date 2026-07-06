@@ -73,17 +73,18 @@ export default function GanttGrid({
   const today = useMemo(() => getToday(), []);
 
   const dayLabels = useMemo(() => {
-    const labels: { date: Date; isWeekendDay: boolean; isFirstOfMonth: boolean }[] = [];
+    const labels: { date: Date; isWeekendDay: boolean; isFirstOfMonth: boolean; isToday: boolean }[] = [];
     for (let i = 0; i < totalDays; i++) {
       const d = addDays(rangeStart, i);
       labels.push({
         date: d,
         isWeekendDay: isWeekend(d),
         isFirstOfMonth: d.getDate() === 1 || i === 0,
+        isToday: daysBetween(today, d) === 0,
       });
     }
     return labels;
-  }, [rangeStart, totalDays]);
+  }, [rangeStart, totalDays, today]);
 
   const displayRows = useMemo<TaskRow[]>(() => {
     if (!liveOverride) return rows;
@@ -234,8 +235,9 @@ export default function GanttGrid({
               alignItems: "center",
               justifyContent: "center",
               borderRight: "1px solid",
-              borderColor: "divider",
-              bgcolor: d.isWeekendDay ? "rgba(0,0,0,0.02)" : "background.paper",
+              borderColor: d.isToday ? "#2D6EEF" : "divider",
+              borderLeft: d.isToday ? "2px solid #2D6EEF" : "none",
+              bgcolor: d.isToday ? "rgba(45,110,239,0.04)" : d.isWeekendDay ? "rgba(0,0,0,0.02)" : "background.paper",
             }}
           >
             {d.isFirstOfMonth && (
@@ -306,7 +308,7 @@ export default function GanttGrid({
               left: todayOffset * DAY_WIDTH,
               width: 2,
               height: totalHeight,
-              bgcolor: "#E0909F",
+              bgcolor: "#2D6EEF",
               zIndex: 10,
               pointerEvents: "none",
             }}
@@ -319,7 +321,7 @@ export default function GanttGrid({
                 width: 14,
                 height: 14,
                 borderRadius: "50%",
-                bgcolor: "#E0909F",
+                bgcolor: "#2D6EEF",
                 border: "2px solid #fff",
               }}
             />
