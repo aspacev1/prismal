@@ -86,7 +86,7 @@ function RegisterForm() {
           <Typography
             variant="h4"
             sx={{
-              background: "linear-gradient(135deg, #0F9D8C 0%, #6C5CE7 100%)",
+              background: "linear-gradient(135deg, #3D7EFF 0%, #1CC8E0 100%)",
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               mb: 0.5,
@@ -123,7 +123,7 @@ function RegisterForm() {
           </Box>
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 3 }}>
             Already have an account?{" "}
-            <Link href="/login" style={{ color: "#0F9D8C", fontWeight: 600, textDecoration: "none" }}>
+            <Link href="/login" style={{ color: "#2D6EEF", fontWeight: 600, textDecoration: "none" }}>
               Log in
             </Link>
           </Typography>
