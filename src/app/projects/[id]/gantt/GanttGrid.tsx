@@ -12,6 +12,8 @@ import {
   isPriority,
   STATUSES,
   PRIORITIES,
+  STATUS_BAR_OPACITY,
+  EXCEPTION_STATUSES,
   userInitials,
   userFullName,
 } from "./constants";
@@ -482,6 +484,9 @@ export default function GanttGrid({
           const status = isStatus(row.status) ? STATUSES[row.status] : STATUSES.todo;
           const priority = isPriority(row.priority) ? PRIORITIES[row.priority] : PRIORITIES.medium;
           const barHeight = isCategory ? 28 : row.isSubtask ? 8 : 10;
+          const barOpacity = isStatus(row.status) ? STATUS_BAR_OPACITY[row.status] : STATUS_BAR_OPACITY.todo;
+          const barGradient = `linear-gradient(135deg, rgba(45,110,239,${barOpacity}) 0%, rgba(15,169,192,${barOpacity}) 100%)`;
+          const isExceptionStatus = isStatus(row.status) && EXCEPTION_STATUSES.includes(row.status);
 
           // Task-only computed values (not used for categories)
           const taskStart = !isCategory && row.startDate ? new Date(row.startDate) : null;
@@ -648,8 +653,7 @@ export default function GanttGrid({
                     height: barHeight,
                     borderRadius: 0.5,
                     cursor: "grab",
-                    bgcolor: `${status.fill}26`,
-                    border: `1.5px solid ${status.fill}`,
+                    background: barGradient,
                     outline: overBudget ? "2px solid #DC2F4E" : "none",
                     outlineOffset: overBudget ? "1px" : "0",
                     display: "flex",
@@ -661,9 +665,16 @@ export default function GanttGrid({
                     "&:active": { cursor: "grabbing" },
                     "&:hover .resize-handle": { opacity: 1 },
                   }}
-                  title={`${row.name}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
+                  title={`${row.name} — ${status.label}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
                 >
-                {/* Worked-so-far fill */}
+                  {isExceptionStatus && (
+                    <Box sx={{ position: "absolute", left: 2, top: "50%", transform: "translateY(-50%)", zIndex: 25 }}>
+                      <StatusDot status={row.status} size={row.isSubtask ? 6 : 8} />
+                    </Box>
+                  )}
+                {/* Worked-so-far fill — a distinct signal (hours logged vs. planned)
+                    from the status-opacity gradient above, so it stays flat brand
+                    blue rather than picking up the status color. */}
                 {filledWidthPx > 0 && (
                   <Box
                     sx={{
@@ -672,7 +683,7 @@ export default function GanttGrid({
                       left: 0,
                       bottom: 0,
                       width: filledWidthPx,
-                      bgcolor: status.fill,
+                      bgcolor: "#2D6EEF",
                       zIndex: 0,
                       pointerEvents: "none",
                     }}
