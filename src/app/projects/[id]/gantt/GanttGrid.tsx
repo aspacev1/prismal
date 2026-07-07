@@ -654,6 +654,12 @@ export default function GanttGrid({
                     borderRadius: 0.5,
                     cursor: "grab",
                     background: barGradient,
+                    // A constant-opacity border (independent of the status-driven
+                    // fill opacity above) so low-opacity bars (todo, archived)
+                    // still have a visible edge for locating start/end and the
+                    // drag-resize affordance — the fill alone can be nearly
+                    // invisible at 0.15-0.25 opacity (per code review).
+                    border: "1px solid rgba(45,110,239,0.3)",
                     outline: overBudget ? "2px solid #DC2F4E" : "none",
                     outlineOffset: overBudget ? "1px" : "0",
                     display: "flex",
