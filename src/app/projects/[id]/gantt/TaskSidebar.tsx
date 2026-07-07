@@ -396,7 +396,13 @@ function SortableRow({
             : isCategory
               ? "rgba(91,99,214,0.06)"
               : "background.paper",
-          borderLeft: isCategory ? "3px solid #5B63D6" : "3px solid transparent",
+          // Category: indigo stripe (unchanged). Task: new thin brand-blue
+          // stripe. Subtask: no stripe — the deepest, quietest level.
+          borderLeft: isCategory
+            ? "3px solid #5B63D6"
+            : row.isSubtask
+              ? "3px solid transparent"
+              : "3px solid #2D6EEF",
           "&:hover": {
             bgcolor: isSelected ? "rgba(79,93,255,0.12)" : "rgba(0,0,0,0.04)",
           },
