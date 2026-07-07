@@ -236,7 +236,6 @@ export default function GanttGrid({
               justifyContent: "center",
               borderRight: "1px solid",
               borderColor: d.isToday ? "#2D6EEF" : "divider",
-              borderLeft: d.isToday ? "2px solid #2D6EEF" : "none",
               bgcolor: d.isToday ? "rgba(45,110,239,0.04)" : d.isWeekendDay ? "rgba(0,0,0,0.02)" : "background.paper",
             }}
           >
