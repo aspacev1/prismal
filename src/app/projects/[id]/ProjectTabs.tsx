@@ -27,6 +27,7 @@ export default function ProjectTabs({
   projectStartDate,
   inviteUrl,
   members,
+  currentUserRole,
 }: {
   projectId: string;
   projectName: string;
@@ -34,6 +35,7 @@ export default function ProjectTabs({
   projectStartDate: string | null;
   inviteUrl: string | null;
   members: MemberData[];
+  currentUserRole: string;
 }) {
   const [tab, setTab] = useState(0);
 
@@ -60,6 +62,7 @@ export default function ProjectTabs({
           projectColor={projectColor}
           inviteUrl={inviteUrl}
           members={members}
+          currentUserRole={currentUserRole}
         />
       )}
     </Box>

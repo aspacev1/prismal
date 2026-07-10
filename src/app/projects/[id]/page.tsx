@@ -50,6 +50,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
             projectStartDate={project.startDate ? project.startDate.toISOString() : null}
             inviteUrl={project.inviteLink ? `/invite/${project.inviteLink.token}` : null}
             members={members}
+            currentUserRole={membership.role}
           />
         </Box>
       </Box>

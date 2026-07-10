@@ -39,13 +39,16 @@ export default function ProjectDetailsTab({
   projectColor: initialColor,
   inviteUrl: initialInviteUrl,
   members: initialMembers,
+  currentUserRole,
 }: {
   projectId: string;
   projectName: string;
   projectColor: string;
   inviteUrl: string | null;
   members: MemberData[];
+  currentUserRole: string;
 }) {
+  const isAdmin = currentUserRole === "owner" || currentUserRole === "admin";
   const [name, setName] = useState(initialName);
   const [color, setColor] = useState(initialColor || "#2D6EEF");
   const [saving, setSaving] = useState(false);
@@ -62,6 +65,10 @@ export default function ProjectDetailsTab({
   const [members, setMembers] = useState(initialMembers);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [selectedMember, setSelectedMember] = useState<MemberData | null>(null);
+  // The member a dialog is acting on. Captured when the dialog opens, because
+  // opening it closes the menu (which clears selectedMember) — the dialog's
+  // own handlers run in a later render where selectedMember is already null.
+  const [dialogMember, setDialogMember] = useState<MemberData | null>(null);
 
   const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
   const [resetPasswordValue, setResetPasswordValue] = useState("");
@@ -69,6 +76,7 @@ export default function ProjectDetailsTab({
 
   const [changeDeptOpen, setChangeDeptOpen] = useState(false);
   const [changeDeptValue, setChangeDeptValue] = useState("");
+  const [changeDeptError, setChangeDeptError] = useState<string | null>(null);
 
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
 
@@ -188,6 +196,7 @@ export default function ProjectDetailsTab({
   }
 
   function handleOpenResetPassword() {
+    setDialogMember(selectedMember);
     setResetPasswordValue("");
     setResetPasswordError(null);
     setResetPasswordOpen(true);
@@ -195,12 +204,12 @@ export default function ProjectDetailsTab({
   }
 
   async function handleResetPassword() {
-    if (!selectedMember || resetPasswordValue.length < 8) {
+    if (!dialogMember || resetPasswordValue.length < 8) {
       setResetPasswordError("Password must be at least 8 characters.");
       return;
     }
 
-    const response = await fetch(`/api/projects/${projectId}/members/${selectedMember.id}`, {
+    const response = await fetch(`/api/projects/${projectId}/members/${dialogMember.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ resetPassword: resetPasswordValue }),
@@ -209,20 +218,23 @@ export default function ProjectDetailsTab({
     if (response.ok) {
       setResetPasswordOpen(false);
     } else {
-      setResetPasswordError("Something went wrong.");
+      const body = await response.json().catch(() => null);
+      setResetPasswordError(body?.error ?? "Something went wrong.");
     }
   }
 
   function handleOpenChangeDept() {
+    setDialogMember(selectedMember);
     setChangeDeptValue(selectedMember?.department ?? "");
+    setChangeDeptError(null);
     setChangeDeptOpen(true);
     handleCloseMenu();
   }
 
   async function handleChangeDept() {
-    if (!selectedMember || !changeDeptValue.trim()) return;
+    if (!dialogMember || !changeDeptValue.trim()) return;
 
-    const response = await fetch(`/api/projects/${projectId}/members/${selectedMember.id}`, {
+    const response = await fetch(`/api/projects/${projectId}/members/${dialogMember.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ department: changeDeptValue }),
@@ -230,9 +242,12 @@ export default function ProjectDetailsTab({
 
     if (response.ok) {
       setMembers((prev) =>
-        prev.map((m) => (m.id === selectedMember.id ? { ...m, department: changeDeptValue } : m))
+        prev.map((m) => (m.id === dialogMember.id ? { ...m, department: changeDeptValue } : m))
       );
       setChangeDeptOpen(false);
+    } else {
+      const body = await response.json().catch(() => null);
+      setChangeDeptError(body?.error ?? "Something went wrong.");
     }
   }
 
@@ -306,9 +321,11 @@ export default function ProjectDetailsTab({
               })}
             </Box>
 
-            <Button variant="contained" onClick={handleSaveProject} disabled={saving} size="small">
-              Save
-            </Button>
+            {isAdmin && (
+              <Button variant="contained" onClick={handleSaveProject} disabled={saving} size="small">
+                Save
+              </Button>
+            )}
           </Box>
 
           {saveError && <Alert severity="error" sx={{ mt: 2, borderRadius: 2 }}>{saveError}</Alert>}
@@ -322,14 +339,16 @@ export default function ProjectDetailsTab({
             <Typography variant="h6" fontWeight={700}>
               Members
             </Typography>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<PersonAddIcon />}
-              onClick={() => setInviteDialogOpen(true)}
-            >
-              Invite
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<PersonAddIcon />}
+                onClick={() => setInviteDialogOpen(true)}
+              >
+                Invite
+              </Button>
+            )}
           </Box>
 
           {sortedMembers.length === 0 ? (
@@ -409,9 +428,11 @@ export default function ProjectDetailsTab({
                       </Box>
                     </Box>
                   </Box>
-                  <IconButton size="small" onClick={(e) => handleOpenMenu(e, member)} sx={{ flexShrink: 0 }}>
-                    <MoreVertIcon fontSize="small" />
-                  </IconButton>
+                  {isAdmin && !member.isCurrentUser && (
+                    <IconButton size="small" onClick={(e) => handleOpenMenu(e, member)} sx={{ flexShrink: 0 }}>
+                      <MoreVertIcon fontSize="small" />
+                    </IconButton>
+                  )}
                 </Box>
               ))}
             </Box>
@@ -435,7 +456,7 @@ export default function ProjectDetailsTab({
       </Menu>
 
       <Dialog open={resetPasswordOpen} onClose={() => setResetPasswordOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Reset password for {selectedMember?.firstName} {selectedMember?.lastName}</DialogTitle>
+        <DialogTitle>Reset password for {dialogMember?.firstName} {dialogMember?.lastName}</DialogTitle>
         <DialogContent>
           <TextField
             label="New password"
@@ -454,7 +475,7 @@ export default function ProjectDetailsTab({
       </Dialog>
 
       <Dialog open={changeDeptOpen} onClose={() => setChangeDeptOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Change department for {selectedMember?.firstName} {selectedMember?.lastName}</DialogTitle>
+        <DialogTitle>Change department for {dialogMember?.firstName} {dialogMember?.lastName}</DialogTitle>
         <DialogContent>
           <TextField
             label="Department"
@@ -462,6 +483,7 @@ export default function ProjectDetailsTab({
             onChange={(e) => setChangeDeptValue(e.target.value)}
             sx={{ mt: 1 }}
           />
+          {changeDeptError && <Alert severity="error" sx={{ mt: 1, borderRadius: 2 }}>{changeDeptError}</Alert>}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setChangeDeptOpen(false)}>Cancel</Button>
