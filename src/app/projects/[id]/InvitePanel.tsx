@@ -26,7 +26,10 @@ export default function InvitePanel({ projectId }: { projectId: string }) {
         if (!res.ok) throw new Error("Couldn't load the invite link.");
         return res.json();
       })
-      .then((body) => setInviteUrl(body.url))
+      // Build the shareable URL from the browser's own origin so the copied
+      // link is always the reachable public URL, regardless of what the server
+      // sees behind a reverse proxy.
+      .then((body) => setInviteUrl(`${window.location.origin}/invite/${body.token}`))
       .catch(() => setError("Couldn't load the invite link. Try refreshing the page."));
   }, [projectId]);
 

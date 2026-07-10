@@ -5,6 +5,8 @@ import { normalizeEmail } from "@/lib/validation";
 export type AuthenticatedUser = {
   id: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
   onboardingComplete: boolean;
   companyId: string | null;
 };
@@ -22,6 +24,8 @@ export async function authenticateUser(email: string, password: string): Promise
   return {
     id: user.id,
     email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
     onboardingComplete: user.onboardingComplete,
     companyId: user.companyId,
   };
