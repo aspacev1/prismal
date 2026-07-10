@@ -55,7 +55,7 @@ describe("POST /api/projects/[id]/invite-email", () => {
     const project = await prisma.project.create({
       data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     const response = await POST(makeRequest(project.id, { emails: ["not-an-email"] }), { params: { id: project.id } });
@@ -68,7 +68,7 @@ describe("POST /api/projects/[id]/invite-email", () => {
     const project = await prisma.project.create({
       data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     const response = await POST(
@@ -90,7 +90,7 @@ describe("POST /api/projects/[id]/invite-email", () => {
     const project = await prisma.project.create({
       data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     vi.mocked(sendInviteEmail)
@@ -113,7 +113,7 @@ describe("POST /api/projects/[id]/invite-email", () => {
     const project = await prisma.project.create({
       data: { name: "Website relaunch", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     vi.mocked(sendInviteEmail).mockRejectedValue(new Error("invalid_api_key"));
@@ -135,7 +135,7 @@ describe("POST /api/projects/[id]/invite-email", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: outsider.id } } as never);
 
     const response = await POST(makeRequest(project.id, { emails: ["a@b.com"] }), { params: { id: project.id } });

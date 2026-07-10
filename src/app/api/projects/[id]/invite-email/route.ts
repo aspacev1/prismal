@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { assertSameOrigin } from "@/lib/origin";
+import { assertSameOrigin, appOrigin } from "@/lib/origin";
+import { requireProjectRole } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { inviteEmailListSchema } from "@/lib/validation";
 import { generateInviteToken } from "@/lib/inviteToken";
@@ -15,12 +16,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireProjectRole(params.id, session.user.id, "admin");
+  if (!authz.ok) return authz.response;
 
   const body = await request.json().catch(() => null);
   const parsed = inviteEmailListSchema.safeParse(body);
@@ -44,8 +41,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     update: {},
   });
 
-  const inviteUrl = `${process.env.DOMAIN ?? request.nextUrl.origin}/invite/${link.token}`;
-  const inviterName = `${inviter.firstName} ${inviter.lastName}`;
+  const inviteUrl = `${appOrigin(request)}/invite/${link.token}`;
+  const inviterName =
+    [inviter.firstName, inviter.lastName].filter(Boolean).join(" ").trim() || inviter.email;
 
   // allSettled — one address failing (bad domain, Resend rate limit, a
   // transient network blip) must not silently drop the rest of the batch

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireMembership } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { reorderSchema } from "@/lib/validation";
 
@@ -13,12 +14,8 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const body = await request.json().catch(() => null);
   const parsed = reorderSchema.safeParse(body);

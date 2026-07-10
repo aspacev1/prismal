@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createTaskSchema } from "@/lib/validation";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireMembership } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { workEndDate } from "@/lib/dateUtils";
 
@@ -11,12 +12,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const tasks = await prisma.task.findMany({
     where: { projectId: params.id },
@@ -84,12 +81,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const body = await request.json().catch(() => null);
   const parsed = createTaskSchema.safeParse(body);
@@ -139,32 +132,39 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const duration = durationDays ?? 0;
   const originalEndDate = start && duration > 0 ? workEndDate(start, duration) : null;
 
-  const maxOrder = await prisma.task.aggregate({
-    where: { projectId: params.id },
-    _max: { order: true },
-  });
+  // Read the current max order and insert in one serializable transaction so two
+  // concurrent creates can't both read the same max and collide on `order`.
+  const task = await prisma.$transaction(
+    async (tx) => {
+      const maxOrder = await tx.task.aggregate({
+        where: { projectId: params.id },
+        _max: { order: true },
+      });
 
-  const task = await prisma.task.create({
-    data: {
-      ...rest,
-      kind: kind ?? "task",
-      startDate: start,
-      durationDays: duration,
-      originalEndDate,
-      originalDurationDays: duration,
-      parentId: parentId || null,
-      assigneeId: assigneeId || null,
-      createdById: session.user.id,
-      projectId: params.id,
-      order: rest.order ?? (maxOrder._max.order ?? -1) + 1,
+      return tx.task.create({
+        data: {
+          ...rest,
+          kind: kind ?? "task",
+          startDate: start,
+          durationDays: duration,
+          originalEndDate,
+          originalDurationDays: duration,
+          parentId: parentId || null,
+          assigneeId: assigneeId || null,
+          createdById: session.user.id,
+          projectId: params.id,
+          order: rest.order ?? (maxOrder._max.order ?? -1) + 1,
+        },
+        include: {
+          assignee: { include: { user: true } },
+          children: true,
+          predecessorDeps: true,
+          successorDeps: true,
+        },
+      });
     },
-    include: {
-      assignee: { include: { user: true } },
-      children: true,
-      predecessorDeps: true,
-      successorDeps: true,
-    },
-  });
+    { isolationLevel: "Serializable" }
+  );
 
   // Update project.startDate to the earliest task start (scroll floor anchor).
   // Only when the task has an actual start date (not null/unplanned).

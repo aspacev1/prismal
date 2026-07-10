@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       },
     });
     await tx.projectMember.create({
-      data: { projectId: created.id, userId: session.user.id },
+      data: { projectId: created.id, userId: session.user.id, role: "owner" },
     });
     return created;
   });

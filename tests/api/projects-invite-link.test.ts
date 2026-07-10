@@ -46,7 +46,7 @@ describe("GET /api/projects/[id]/invite-link", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
 
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id } } as never);
     const response = await GET(makeRequest(project.id), { params: { id: project.id } });
@@ -58,7 +58,7 @@ describe("GET /api/projects/[id]/invite-link", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     const first = await GET(makeRequest(project.id), { params: { id: project.id } });
@@ -80,7 +80,7 @@ describe("GET /api/projects/[id]/invite-link", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: owner.id, companyId: owner.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: owner.id } } as never);
 
     const [first, second] = await Promise.all([

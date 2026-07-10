@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { updateTaskSchema, TASK_HISTORY_FIELDS } from "@/lib/validation";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireMembership } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { workEndDate, daysBetween } from "@/lib/dateUtils";
 
@@ -17,12 +18,8 @@ export async function PATCH(
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const existing = await prisma.task.findUnique({ where: { id: params.taskId } });
   if (!existing || existing.projectId !== params.id) {
@@ -46,6 +43,23 @@ export async function PATCH(
       }
       if (parentId === params.taskId) {
         return NextResponse.json({ error: "A task cannot be its own parent." }, { status: 400 });
+      }
+      // Cycle guard: the chosen parent must not be a descendant of this task,
+      // otherwise reparenting would create a loop (A → B → A) that infinite-loops
+      // any recursive tree walk in the UI.
+      let ancestorId: string | null = parent.parentId;
+      while (ancestorId) {
+        if (ancestorId === params.taskId) {
+          return NextResponse.json(
+            { error: "Cannot move a task under one of its own descendants." },
+            { status: 400 }
+          );
+        }
+        const ancestor: { parentId: string | null } | null = await prisma.task.findUnique({
+          where: { id: ancestorId },
+          select: { parentId: true },
+        });
+        ancestorId = ancestor?.parentId ?? null;
       }
       // 3-level cap: a Subtask (a Task whose parent is a Task) cannot have children.
       if (parent.kind === "task" && parent.parentId !== null) {
@@ -202,20 +216,19 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string; taskId: string } }
 ) {
+  const originError = assertSameOrigin(request);
+  if (originError) return originError;
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const existing = await prisma.task.findUnique({ where: { id: params.taskId } });
   if (!existing || existing.projectId !== params.id) {
