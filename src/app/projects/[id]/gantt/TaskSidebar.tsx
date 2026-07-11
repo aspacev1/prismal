@@ -104,6 +104,14 @@ export default function TaskSidebar({
     setInlineAddValue("");
   }
 
+  function handleAddChildClick(parentId: string) {
+    // Expand (never collapse) the parent so the inline input and the new child
+    // are visible — onToggleExpand on an already-expanded row would fold it.
+    if (!expanded.has(parentId)) onToggleExpand(parentId);
+    setInlineAddParentId(parentId);
+    setInlineAddValue("");
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
@@ -239,11 +247,7 @@ export default function TaskSidebar({
                   onToggleExpand={onToggleExpand}
                   childCounts={childCounts}
                   rollupsByCategory={rollupsByCategory}
-                  onAddChildClick={(parentId) => {
-                    onToggleExpand(parentId);
-                    setInlineAddParentId(parentId);
-                    setInlineAddValue("");
-                  }}
+                  onAddChildClick={handleAddChildClick}
                   isDragging={activeId === row.id}
                   memberFor={memberFor}
                   inlineAddParentId={inlineAddParentId}
@@ -258,37 +262,74 @@ export default function TaskSidebar({
                   {/* Nested SortableContext for subtasks */}
                   {isExpanded && children.length > 0 && (
                     <SortableContext items={childIds} strategy={verticalListSortingStrategy}>
-                      {children.map((child) => (
-                        <SortableRow
-                          key={child.id}
-                          row={child}
-                          members={members}
-                          selectedId={selectedId}
-                          onRowSelect={onSelect}
-                          onDeleteTask={onDeleteTask}
-                          expanded={expanded}
-                          onToggleExpand={onToggleExpand}
-                          childCounts={childCounts}
-                          rollupsByCategory={rollupsByCategory}
-                          onAddChildClick={(parentId) => {
-                            onToggleExpand(parentId);
-                            setInlineAddParentId(parentId);
-                            setInlineAddValue("");
-                          }}
-                          isDragging={activeId === child.id}
-                          memberFor={memberFor}
-                          inlineAddParentId={inlineAddParentId}
-                          inlineAddValue={inlineAddValue}
-                          setInlineAddValue={setInlineAddValue}
-                          setInlineAddParentId={setInlineAddParentId}
-                          commitInlineAdd={commitInlineAdd}
-                          inputRef={inputRef}
-                          childIds={[]}
-                          isExpanded={false}
-                        >
-                          {/* Subtasks don't have nested children (3-level cap) */}
-                        </SortableRow>
-                      ))}
+                      {children.map((child) => {
+                        // Third level (Category → Task → Subtask): `rows` from
+                        // RoadmapTab only contains grandchildren when this child
+                        // is expanded, and GanttGrid renders them — the sidebar
+                        // must render the same rows or the two panes drift out
+                        // of vertical alignment.
+                        const grandChildren = childRowsByParent[child.id] ?? [];
+                        const grandChildIds = grandChildren.map((g) => g.id);
+                        const childExpanded = expanded.has(child.id);
+
+                        return (
+                          <SortableRow
+                            key={child.id}
+                            row={child}
+                            members={members}
+                            selectedId={selectedId}
+                            onRowSelect={onSelect}
+                            onDeleteTask={onDeleteTask}
+                            expanded={expanded}
+                            onToggleExpand={onToggleExpand}
+                            childCounts={childCounts}
+                            rollupsByCategory={rollupsByCategory}
+                            onAddChildClick={handleAddChildClick}
+                            isDragging={activeId === child.id}
+                            memberFor={memberFor}
+                            inlineAddParentId={inlineAddParentId}
+                            inlineAddValue={inlineAddValue}
+                            setInlineAddValue={setInlineAddValue}
+                            setInlineAddParentId={setInlineAddParentId}
+                            commitInlineAdd={commitInlineAdd}
+                            inputRef={inputRef}
+                            childIds={grandChildIds}
+                            isExpanded={childExpanded}
+                          >
+                            {childExpanded && grandChildren.length > 0 && (
+                              <SortableContext items={grandChildIds} strategy={verticalListSortingStrategy}>
+                                {grandChildren.map((grandChild) => (
+                                  <SortableRow
+                                    key={grandChild.id}
+                                    row={grandChild}
+                                    members={members}
+                                    selectedId={selectedId}
+                                    onRowSelect={onSelect}
+                                    onDeleteTask={onDeleteTask}
+                                    expanded={expanded}
+                                    onToggleExpand={onToggleExpand}
+                                    childCounts={childCounts}
+                                    rollupsByCategory={rollupsByCategory}
+                                    onAddChildClick={handleAddChildClick}
+                                    isDragging={activeId === grandChild.id}
+                                    memberFor={memberFor}
+                                    inlineAddParentId={inlineAddParentId}
+                                    inlineAddValue={inlineAddValue}
+                                    setInlineAddValue={setInlineAddValue}
+                                    setInlineAddParentId={setInlineAddParentId}
+                                    commitInlineAdd={commitInlineAdd}
+                                    inputRef={inputRef}
+                                    childIds={[]}
+                                    isExpanded={false}
+                                  >
+                                    {/* Subtasks have no children of their own (3-level cap) */}
+                                  </SortableRow>
+                                ))}
+                              </SortableContext>
+                            )}
+                          </SortableRow>
+                        );
+                      })}
                     </SortableContext>
                   )}
                 </SortableRow>
