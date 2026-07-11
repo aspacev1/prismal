@@ -8,8 +8,9 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/maybe-migrate.js && next build",
+    "build": "next build",
     "start": "next start",
+    "migrate:prod": "node scripts/maybe-migrate.js",
     "postinstall": "prisma generate",
     "test": "dotenv -e .env.test -- vitest run",
     "test:watch": "dotenv -e .env.test -- vitest",
