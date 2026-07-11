@@ -41,6 +41,7 @@ import type { TaskRow, MemberOption, TaskKind, TaskDraft } from "./gantt/types";
 import {
   addDays,
   daysBetween,
+  workDaysBetween,
   workEndDate,
   getToday,
 } from "@/lib/dateUtils";
@@ -748,7 +749,7 @@ export default function RoadmapTab({
   }
   function formatDate(d: string | Date | null) {
     if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   }
 
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
@@ -776,7 +777,7 @@ export default function RoadmapTab({
     const displayStartDate: string | Date | null = rollup ? rollup.startDate : task.startDate;
     const displayDurationDays =
       rollup && rollup.startDate && rollup.endDate
-        ? daysBetween(rollup.startDate, rollup.endDate) + 1
+        ? workDaysBetween(rollup.startDate, rollup.endDate)
         : rollup
           ? 0
           : task.durationDays;

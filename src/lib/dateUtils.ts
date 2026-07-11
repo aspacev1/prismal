@@ -8,9 +8,13 @@ export function daysBetween(a: Date | string, b: Date | string): number {
   return Math.round((new Date(b).valueOf() - new Date(a).valueOf()) / (1000 * 60 * 60 * 24));
 }
 
+// Dates are stored and compared as UTC-midnight calendar dates. All date math
+// below operates in UTC so a task on a given calendar day renders on that same
+// day regardless of the viewer's timezone (a local-time getDay/getDate would
+// shift a UTC-midnight date to the previous day west of UTC).
 export function addDays(date: Date | string, n: number): Date {
   const d = new Date(date);
-  d.setDate(d.getDate() + n);
+  d.setUTCDate(d.getUTCDate() + n);
   return d;
 }
 
@@ -19,11 +23,11 @@ export function isoDate(d: Date | string): string {
 }
 
 export function fmtDate(d: Date | string): string {
-  return new Date(d).toLocaleDateString("en-US", { day: "numeric", month: "short" });
+  return new Date(d).toLocaleDateString("en-US", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
 export function isWeekend(d: Date | string): boolean {
-  const day = new Date(d).getDay();
+  const day = new Date(d).getUTCDay();
   return day === 0 || day === 6;
 }
 
@@ -91,7 +95,8 @@ export function extensionDays(originalEndDate: Date | string | null, currentEnd:
 }
 
 export function getToday(): Date {
-  const t = new Date();
-  t.setHours(0, 0, 0, 0);
-  return t;
+  // The viewer's local calendar date, expressed as a UTC-midnight instant to
+  // match how task dates are stored and compared.
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 }
