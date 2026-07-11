@@ -43,7 +43,7 @@ describe("PATCH /api/projects/[id]", () => {
     const project = await prisma.project.create({
       data: { name: "Old", createdById: user.id, companyId: user.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id } } as never);
 
     const response = await PATCH(
@@ -65,7 +65,7 @@ describe("PATCH /api/projects/[id]", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: user.id, companyId: user.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id } } as never);
 
     const response = await PATCH(makeRequest(project.id, { name: "Y" }, "http://evil.com"), {
@@ -79,7 +79,7 @@ describe("PATCH /api/projects/[id]", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: user.id, companyId: user.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id } } as never);
 
     const response = await PATCH(makeRequest(project.id, { color: "not-a-color" }), {
@@ -93,7 +93,7 @@ describe("PATCH /api/projects/[id]", () => {
     const project = await prisma.project.create({
       data: { name: "X", createdById: user.id, companyId: user.companyId },
     });
-    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id } });
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: user.id, role: "owner" } });
     vi.mocked(auth).mockResolvedValue({ user: { id: user.id } } as never);
 
     const response = await PATCH(makeRequest(project.id, { name: "X", description: "Old", color: "#0F9D8C" }), {

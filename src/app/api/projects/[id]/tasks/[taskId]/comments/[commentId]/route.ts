@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireMembership, roleAtLeast } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 
 export async function DELETE(
@@ -15,12 +16,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const comment = await prisma.taskComment.findUnique({
     where: { id: params.commentId },
@@ -29,8 +26,10 @@ export async function DELETE(
     return NextResponse.json({ error: "Comment not found." }, { status: 404 });
   }
 
-  // Only the author can delete their comment
-  if (comment.authorId !== session.user.id) {
+  // The author can delete their own comment; admins and the owner can moderate
+  // any comment in the project.
+  const canModerate = roleAtLeast(authz.membership.role, "admin");
+  if (comment.authorId !== session.user.id && !canModerate) {
     return NextResponse.json({ error: "You can only delete your own comments." }, { status: 403 });
   }
 

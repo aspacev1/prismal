@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { requireMembership } from "@/lib/projectAuth";
 import { TASK_FIELD_LABELS } from "@/lib/validation";
 import { fmtDate } from "@/lib/dateUtils";
 
@@ -38,12 +39,8 @@ export async function GET(
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const existing = await prisma.task.findUnique({ where: { id: params.taskId } });
   if (!existing || existing.projectId !== params.id) {

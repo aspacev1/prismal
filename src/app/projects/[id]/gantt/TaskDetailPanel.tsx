@@ -80,6 +80,7 @@ export default function TaskDetailPanel({
   const [commentBody, setCommentBody] = useState("");
   const [commentExpanded, setCommentExpanded] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionMembers, setMentionMembers] = useState<string[]>([]);
@@ -130,7 +131,15 @@ export default function TaskDetailPanel({
   const shifted = endDate && isShifted(row.originalEndDate, endDate, draft.durationDays, row.originalDurationDays);
 
   const depCandidates = useMemo(
-    () => rows.filter((r) => r.id !== row.id && !(row.deps || []).some((d) => d.predecessorId === r.id)),
+    // Categories are structural groupings and never participate in dependencies,
+    // so they must not be offered as predecessors (the server rejects them too).
+    () =>
+      rows.filter(
+        (r) =>
+          r.id !== row.id &&
+          r.kind !== "category" &&
+          !(row.deps || []).some((d) => d.predecessorId === r.id)
+      ),
     [rows, row]
   );
 
@@ -215,6 +224,7 @@ export default function TaskDetailPanel({
     const body = commentBody.trim();
     if (!body) return;
     setPosting(true);
+    setCommentError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/tasks/${row.id}/comments`, {
         method: "POST",
@@ -227,9 +237,12 @@ export default function TaskDetailPanel({
         setMentionMembers([]);
         setCommentExpanded(false);
         setCommentRefreshKey((k) => k + 1);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setCommentError(data.error ?? "Couldn't post your comment. Please try again.");
       }
     } catch {
-      // ignore
+      setCommentError("Network error. Please try again.");
     } finally {
       setPosting(false);
     }
@@ -624,23 +637,28 @@ export default function TaskDetailPanel({
             </Box>
           )}
           {commentExpanded ? (
-            <Box sx={{ display: "flex", gap: 0.75, alignItems: "flex-end" }}>
-              <TextField
-                inputRef={commentInputRef}
-                multiline
-                minRows={2}
-                maxRows={4}
-                fullWidth
-                size="small"
-                value={commentBody}
-                onChange={handleCommentChange}
-                onBlur={() => { if (!commentBody.trim()) setCommentExpanded(false); }}
-                placeholder="Write a comment… use @ to tag someone"
-                sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
-              />
-              <Button variant="contained" size="small" onClick={handlePostComment} disabled={posting || !commentBody.trim()} sx={{ textTransform: "none", flexShrink: 0 }}>
-                Post
-              </Button>
+            <Box>
+              <Box sx={{ display: "flex", gap: 0.75, alignItems: "flex-end" }}>
+                <TextField
+                  inputRef={commentInputRef}
+                  multiline
+                  minRows={2}
+                  maxRows={4}
+                  fullWidth
+                  size="small"
+                  value={commentBody}
+                  onChange={handleCommentChange}
+                  onBlur={() => { if (!commentBody.trim()) setCommentExpanded(false); }}
+                  placeholder="Write a comment… use @ to tag someone"
+                  sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
+                />
+                <Button variant="contained" size="small" onClick={handlePostComment} disabled={posting || !commentBody.trim()} sx={{ textTransform: "none", flexShrink: 0 }}>
+                  Post
+                </Button>
+              </Box>
+              {commentError && (
+                <Typography sx={{ mt: 0.75, fontSize: 12, color: "error.main" }}>{commentError}</Typography>
+              )}
             </Box>
           ) : (
             <Box

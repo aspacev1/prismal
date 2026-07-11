@@ -40,7 +40,7 @@ describe("POST /api/register", () => {
     const response = await POST(makeRequest({ email: "person@gmail.com", password: "longenough" }));
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toBe("please use only corporate email");
+    expect(body.error).toBe("Please use a corporate email address.");
 
     const user = await prisma.user.findUnique({ where: { email: "person@gmail.com" } });
     expect(user).toBeNull();

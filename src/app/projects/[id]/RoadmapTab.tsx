@@ -13,6 +13,12 @@ import Tooltip from "@mui/material/Tooltip";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Collapse from "@mui/material/Collapse";
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import DialogActions from "@mui/material/DialogActions";
+import Snackbar from "@mui/material/Snackbar";
+import Alert from "@mui/material/Alert";
 import AddIcon from "@mui/icons-material/Add";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -35,6 +41,7 @@ import type { TaskRow, MemberOption, TaskKind, TaskDraft } from "./gantt/types";
 import {
   addDays,
   daysBetween,
+  workDaysBetween,
   workEndDate,
   getToday,
 } from "@/lib/dateUtils";
@@ -95,6 +102,13 @@ export default function RoadmapTab({
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [onlyDependent, setOnlyDependent] = useState(false);
   const [menuTask, setMenuTask] = useState<TaskRow | null>(null);
+  // Delete confirmation: the row awaiting a confirmed delete, plus any error.
+  const [pendingDelete, setPendingDelete] = useState<TaskRow | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // Transient error banner for actions that otherwise fail silently (rejected
+  // drag, failed schedule-change save).
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -119,8 +133,13 @@ export default function RoadmapTab({
     fetchTasks();
   }, [fetchTasks]);
 
-  // Auto-expand tasks that have subtasks on first load
+  // Auto-expand tasks that have subtasks — only once, on the first load that
+  // returns tasks. Running it on every `tasks` change would re-expand a
+  // category the user just collapsed whenever any mutation refetched.
+  const didAutoExpand = useRef(false);
   useEffect(() => {
+    if (didAutoExpand.current || tasks.length === 0) return;
+    didAutoExpand.current = true;
     setExpanded((prev) => {
       const next = new Set(prev);
       for (const t of tasks) {
@@ -252,6 +271,7 @@ export default function RoadmapTab({
       needsConfirm?: boolean;
       needsReason?: boolean;
       isDelay?: boolean;
+      error?: string;
       body?: { originalEndDate: string; newEndDate: string };
     }> => {
       try {
@@ -279,10 +299,12 @@ export default function RoadmapTab({
           if (body.error === "A reason is required when changing task dates.") {
             return { ok: false, needsReason: true };
           }
+          return { ok: false, error: body.error };
         }
-        return { ok: false };
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, error: body.error };
       } catch {
-        return { ok: false };
+        return { ok: false, error: "Network error. Please try again." };
       }
     },
     [projectId]
@@ -331,6 +353,9 @@ export default function RoadmapTab({
         openScheduleDialog(rowId, patch, true, result.body);
       } else if (result.needsReason) {
         openScheduleDialog(rowId, patch, false);
+      } else if (!result.ok) {
+        setActionError(result.error ?? "Couldn't move that task. Please try again.");
+        fetchTasks(); // snap the bar back to the server state
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -355,7 +380,12 @@ export default function RoadmapTab({
       const patch = pendingSchedule.patch;
       setPendingSchedule(null);
       const result = await patchTask(rowId, patch, isDelay, reason);
-      if (result.ok) fetchTasks();
+      if (result.ok) {
+        fetchTasks();
+      } else {
+        setActionError(result.error ?? "Couldn't save the schedule change. Please try again.");
+        fetchTasks(); // resync to server state so the bar reflects reality
+      }
     },
     [pendingSchedule, patchTask, fetchTasks]
   );
@@ -430,9 +460,19 @@ export default function RoadmapTab({
     [projectId, fetchTasks]
   );
 
+  // Reordering computes each row's new order from its index among the *visible*
+  // rows. When the "Dependent only" filter hides siblings, that index no longer
+  // reflects the true sibling order, so persisting it would scramble the hidden
+  // tasks. Bail and refetch (revert) rather than corrupt the order.
+  const reorderBlockedByFilter = onlyDependent && view === "gantt";
+
   // Bulk reorder — optimistic update + API call
   const handleReorder = useCallback(
     (items: { id: string; order: number }[]) => {
+      if (reorderBlockedByFilter) {
+        fetchTasks();
+        return;
+      }
       // Optimistically update order in local state — UI updates instantly, no reload.
       const orderMap = new Map(items.map((item) => [item.id, item.order]));
       setTasks((prev) =>
@@ -449,12 +489,16 @@ export default function RoadmapTab({
         if (!res.ok) fetchTasks(); // revert on failure
       });
     },
-    [projectId, fetchTasks]
+    [projectId, fetchTasks, reorderBlockedByFilter]
   );
 
   // Reparent a task (move it to a different category or to top-level) + reorder siblings
   const handleReparent = useCallback(
     (taskId: string, newParentId: string | null, siblingOrder: { id: string; order: number }[]) => {
+      if (reorderBlockedByFilter) {
+        fetchTasks();
+        return;
+      }
       // Optimistically update: change parentId + reorder siblings — UI updates instantly.
       setTasks((prev) =>
         prev.map((t) => {
@@ -482,7 +526,7 @@ export default function RoadmapTab({
         });
       });
     },
-    [projectId, fetchTasks]
+    [projectId, fetchTasks, reorderBlockedByFilter]
   );
 
   // Inline update from detail panel — kept for non-draft interactions (e.g., assignee pills
@@ -516,17 +560,53 @@ export default function RoadmapTab({
     [projectId]
   );
 
-  const deleteRow = useCallback(
-    async (rowId: string) => {
-      await fetch(`/api/projects/${projectId}/tasks/${rowId}`, {
-        method: "DELETE",
-        credentials: "same-origin",
-      });
-      setSelectedId((cur) => (cur === rowId ? null : cur));
-      fetchTasks();
+  // Actually delete a task. Checks the response and surfaces an error instead
+  // of silently assuming success. Returns whether the delete succeeded.
+  const performDelete = useCallback(
+    async (rowId: string): Promise<boolean> => {
+      setDeleting(true);
+      setDeleteError(null);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/tasks/${rowId}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setDeleteError(body.error ?? "Failed to delete.");
+          return false;
+        }
+        setSelectedId((cur) => (cur === rowId ? null : cur));
+        fetchTasks();
+        return true;
+      } catch {
+        setDeleteError("Network error. Please try again.");
+        return false;
+      } finally {
+        setDeleting(false);
+      }
     },
     [projectId, fetchTasks]
   );
+
+  // Open the delete confirmation for a row. Deleting a category cascades to all
+  // of its tasks and subtasks, so paths that don't already confirm (the sidebar
+  // trash icon and the list-row menu) route through this dialog.
+  const requestDelete = useCallback(
+    (rowId: string) => {
+      const row = tasks.find((t) => t.id === rowId);
+      if (!row) return;
+      setDeleteError(null);
+      setPendingDelete({ ...row, isSubtask: false });
+    },
+    [tasks]
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    const ok = await performDelete(pendingDelete.id);
+    if (ok) setPendingDelete(null);
+  }, [pendingDelete, performDelete]);
 
   const addTask = useCallback(async () => {
     const firstMember = members[0];
@@ -653,10 +733,11 @@ export default function RoadmapTab({
     setMenuAnchor(null);
     setMenuTask(null);
   }
-  async function handleDeleteFromList() {
+  function handleDeleteFromList() {
     if (!menuTask) return;
+    const id = menuTask.id;
     handleCloseMenu();
-    await deleteRow(menuTask.id);
+    requestDelete(id);
   }
 
   const rootTasks = effectiveTasks.filter((t) => !t.parentId);
@@ -668,7 +749,7 @@ export default function RoadmapTab({
   }
   function formatDate(d: string | Date | null) {
     if (!d) return "—";
-    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   }
 
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
@@ -696,7 +777,7 @@ export default function RoadmapTab({
     const displayStartDate: string | Date | null = rollup ? rollup.startDate : task.startDate;
     const displayDurationDays =
       rollup && rollup.startDate && rollup.endDate
-        ? daysBetween(rollup.startDate, rollup.endDate) + 1
+        ? workDaysBetween(rollup.startDate, rollup.endDate)
         : rollup
           ? 0
           : task.durationDays;
@@ -913,7 +994,7 @@ export default function RoadmapTab({
                 members={members}
                 onSelect={setSelectedId}
                 selectedId={selectedId}
-                onDeleteTask={deleteRow}
+                onDeleteTask={requestDelete}
                 expanded={expanded}
                 onToggleExpand={toggleExpand}
                 childCounts={childCounts}
@@ -950,7 +1031,21 @@ export default function RoadmapTab({
             </Typography>
           )}
 
-          {!loading && !error && rootTasks.length === 0 && (
+          {!loading && !error && rootTasks.length === 0 && tasks.length > 0 && onlyDependent && (
+            <Box sx={{ textAlign: "center", py: 6 }}>
+              <Typography variant="body1" color="text.secondary" gutterBottom>
+                No dependent tasks
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                No tasks have dependencies yet. Turn off &ldquo;Dependent only&rdquo; to see all tasks.
+              </Typography>
+              <Button variant="outlined" size="small" onClick={() => setOnlyDependent(false)}>
+                Show all tasks
+              </Button>
+            </Box>
+          )}
+
+          {!loading && !error && rootTasks.length === 0 && !(tasks.length > 0 && onlyDependent) && (
             <Box sx={{ textAlign: "center", py: 6 }}>
               <Typography variant="body1" color="text.secondary" gutterBottom>
                 No tasks yet
@@ -1021,7 +1116,7 @@ export default function RoadmapTab({
           subtasks={selectedRow.isSubtask ? [] : childrenOf(selectedRow.id).map((t) => ({ ...t, isSubtask: t.kind === "task" && selectedRow.kind === "task" }))}
           onClose={() => setSelectedId(null)}
           onSave={handleSaveTask}
-          onDelete={deleteRow}
+          onDelete={performDelete}
           onAddDependency={handleAddDependency}
           onRemoveDependency={handleRemoveDependency}
           onSelectSubtask={setSelectedId}
@@ -1033,6 +1128,63 @@ export default function RoadmapTab({
         onConfirm={confirmScheduleChange}
         onCancel={cancelScheduleChange}
       />
+
+      {/* Delete confirmation for paths that don't confirm inline (sidebar, list menu) */}
+      <Dialog open={pendingDelete !== null} onClose={() => setPendingDelete(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontSize: 15, fontWeight: 600 }}>
+          Delete this {pendingDelete?.kind === "category" ? "category" : "task"}?
+        </DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary" sx={{ fontSize: 13 }}>
+            {pendingDelete?.kind === "category"
+              ? "This category and all its tasks and subtasks will be permanently deleted."
+              : "This task and all its subtasks will be permanently deleted."}
+          </Typography>
+          {deleteError && (
+            <Alert severity="error" sx={{ mt: 2, borderRadius: 2 }}>
+              {deleteError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, pb: 2.5 }}>
+          <Button onClick={() => setPendingDelete(null)} sx={{ textTransform: "none" }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={deleting}
+            onClick={confirmDelete}
+            sx={{ textTransform: "none" }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Error feedback for the inline (detail-panel) delete path */}
+      <Snackbar
+        open={deleteError !== null && pendingDelete === null}
+        autoHideDuration={6000}
+        onClose={() => setDeleteError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setDeleteError(null)} sx={{ borderRadius: 2 }}>
+          {deleteError}
+        </Alert>
+      </Snackbar>
+
+      {/* Error feedback for actions that otherwise fail silently (drag, schedule save) */}
+      <Snackbar
+        open={actionError !== null}
+        autoHideDuration={6000}
+        onClose={() => setActionError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert severity="error" onClose={() => setActionError(null)} sx={{ borderRadius: 2 }}>
+          {actionError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

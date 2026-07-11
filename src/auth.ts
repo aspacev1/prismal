@@ -33,6 +33,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if ("companyId" in session) {
           token.companyId = session.companyId;
         }
+        if ("firstName" in session) {
+          token.firstName = session.firstName ?? null;
+        }
+        if ("lastName" in session) {
+          token.lastName = session.lastName ?? null;
+        }
       }
       return token;
     },

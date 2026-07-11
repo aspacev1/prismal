@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { appOrigin } from "@/lib/origin";
+import { requireProjectRole } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { generateInviteToken } from "@/lib/inviteToken";
 
@@ -9,12 +11,10 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  // Generating/exposing an invite link grants project access, so it is gated to
+  // admins rather than every member.
+  const authz = await requireProjectRole(params.id, session.user.id, "admin");
+  if (!authz.ok) return authz.response;
 
   // upsert (not findUnique-then-create) — two concurrent requests for the
   // same project must not both try to insert and collide on the unique
@@ -25,5 +25,5 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     update: {},
   });
 
-  return NextResponse.json({ token: link.token, url: `${request.nextUrl.origin}/invite/${link.token}` });
+  return NextResponse.json({ token: link.token, url: `${appOrigin(request)}/invite/${link.token}` });
 }

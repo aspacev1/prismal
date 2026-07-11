@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { updateMemberSchema } from "@/lib/validation";
 import { hashPassword } from "@/lib/password";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireProjectRole } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string; memberId: string } }) {
@@ -14,12 +15,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  // Member management (block/unblock, reset password, change department) is an
+  // administrative action. Without this gate, any member could reset another
+  // member's global account password and take over their account.
+  const authz = await requireProjectRole(params.id, session.user.id, "admin");
+  if (!authz.ok) return authz.response;
 
   const targetMembership = await prisma.projectMember.findUnique({
     where: { id: params.memberId },
@@ -38,30 +38,36 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
   const { blocked, department, resetPassword } = parsed.data;
 
-  if (resetPassword) {
-    const passwordHash = await hashPassword(resetPassword);
-    await prisma.user.update({
-      where: { id: targetMembership.userId },
-      data: { passwordHash },
-    });
+  // The project owner cannot be blocked or have their password reset by an
+  // admin — otherwise an admin could lock the owner out of their own project
+  // or take over the owner's account.
+  if (targetMembership.role === "owner" && (typeof blocked === "boolean" || resetPassword)) {
+    return NextResponse.json({ error: "The project owner cannot be blocked or reset." }, { status: 403 });
   }
 
-  const updateData: Record<string, unknown> = {};
-  if (typeof blocked === "boolean") updateData.blocked = blocked;
-  if (department) {
-    updateData.department = department;
-    await prisma.user.update({
-      where: { id: targetMembership.userId },
-      data: { department },
-    });
-  }
+  await prisma.$transaction(async (tx) => {
+    if (resetPassword) {
+      const passwordHash = await hashPassword(resetPassword);
+      await tx.user.update({
+        where: { id: targetMembership.userId },
+        data: { passwordHash },
+      });
+    }
 
-  if (Object.keys(updateData).length > 0) {
-    await prisma.projectMember.update({
-      where: { id: params.memberId },
-      data: updateData,
-    });
-  }
+    if (department) {
+      await tx.user.update({
+        where: { id: targetMembership.userId },
+        data: { department },
+      });
+    }
+
+    if (typeof blocked === "boolean") {
+      await tx.projectMember.update({
+        where: { id: params.memberId },
+        data: { blocked },
+      });
+    }
+  });
 
   return NextResponse.json({ ok: true });
 }

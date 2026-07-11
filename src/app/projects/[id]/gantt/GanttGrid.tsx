@@ -81,7 +81,7 @@ export default function GanttGrid({
       labels.push({
         date: d,
         isWeekendDay: isWeekend(d),
-        isFirstOfMonth: d.getDate() === 1 || i === 0,
+        isFirstOfMonth: d.getUTCDate() === 1 || i === 0,
         isToday: daysBetween(today, d) === 0,
       });
     }
@@ -251,14 +251,14 @@ export default function GanttGrid({
                   color: "text.disabled",
                 }}
               >
-                {d.date.toLocaleDateString("en-US", { month: "short" })}
+                {d.date.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" })}
               </Typography>
             )}
             <Typography sx={{ fontSize: 11, color: "text.secondary", lineHeight: 1, mt: 2.5 }}>
-              {d.date.getDate()}
+              {d.date.getUTCDate()}
             </Typography>
             <Typography sx={{ fontSize: 9, color: "text.disabled", lineHeight: 1, mt: 0.5 }}>
-              {d.date.toLocaleDateString("en-US", { weekday: "narrow" })}
+              {d.date.toLocaleDateString("en-US", { weekday: "narrow", timeZone: "UTC" })}
             </Typography>
           </Box>
         ))}
@@ -598,7 +598,7 @@ export default function GanttGrid({
                   }}
                   title={
                     hasRollup
-                      ? `${row.name} — ${rollupStart!.toLocaleDateString("en-US", { month: "short", day: "numeric" })} → ${rollupEnd!.toLocaleDateString("en-US", { month: "short", day: "numeric" })} (${rollup?.progress ?? 0}% progress)`
+                      ? `${row.name} — ${rollupStart!.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} → ${rollupEnd!.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} (${rollup?.progress ?? 0}% progress)`
                       : `${row.name} — category (no planned tasks yet)`
                   }
                 >

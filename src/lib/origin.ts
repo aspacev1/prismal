@@ -8,10 +8,20 @@ export function assertSameOrigin(request: NextRequest): NextResponse | null {
   // against it instead of request.nextUrl.origin, which inside a container
   // resolves to the internal host (http://localhost:3000) and would block
   // legitimate browser requests from the public origin.
-  const expected = process.env.DOMAIN ?? new URL(request.url).origin;
-  if (origin !== expected) {
+  if (origin !== appOrigin(request)) {
     return NextResponse.json({ error: "Request rejected." }, { status: 403 });
   }
 
   return null;
+}
+
+/**
+ * The public origin of the app (scheme + host), used both for the CSRF
+ * same-origin check and for building absolute links (invites) that must be
+ * reachable from a browser. Behind a reverse proxy like Caddy, request.url
+ * resolves to the internal host (http://localhost:3000), so DOMAIN — a full
+ * origin such as https://app.example.com — takes precedence when set.
+ */
+export function appOrigin(request: NextRequest): string {
+  return process.env.DOMAIN ?? new URL(request.url).origin;
 }

@@ -104,7 +104,12 @@ function OnboardingForm() {
       setError("Something went wrong. Please try again.");
       return;
     }
-    await update({ onboardingComplete: true, companyId: body.companyId });
+    await update({
+      onboardingComplete: true,
+      companyId: body.companyId,
+      firstName: form.firstName,
+      lastName: form.lastName,
+    });
     router.push(body.projectId ? `/projects/${body.projectId}` : "/workspace");
   }
 

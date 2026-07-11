@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createDependencySchema } from "@/lib/validation";
 import { assertSameOrigin } from "@/lib/origin";
+import { requireMembership } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
@@ -13,12 +14,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const body = await request.json().catch(() => null);
   const parsed = createDependencySchema.safeParse(body);
@@ -43,57 +40,74 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: "Successor task not found in this project." }, { status: 400 });
   }
 
-  const existing = await prisma.taskDependency.findUnique({
-    where: { predecessorId_successorId: { predecessorId, successorId } },
-  });
-  if (existing) {
-    return NextResponse.json({ error: "This dependency already exists." }, { status: 409 });
+  // Categories are structural groupings, not schedulable work — they never
+  // participate in dependencies (see lib/taskUtils.ts).
+  if (predecessor.kind === "category" || successor.kind === "category") {
+    return NextResponse.json({ error: "Categories cannot have dependencies." }, { status: 400 });
   }
 
-  // DFS cycle check: walking forward from successor, must not reach predecessor
-  const visited = new Set<string>();
-  const stack = [successorId];
-  let createsCycle = false;
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current === predecessorId) { createsCycle = true; break; }
-    if (visited.has(current)) continue;
-    visited.add(current);
-    const outgoing = await prisma.taskDependency.findMany({
-      where: { predecessorId: current },
-      select: { successorId: true },
+  // The existence check, the cycle walk, and the insert run in one transaction
+  // so two concurrent requests can't each pass the check and then both insert,
+  // producing a cycle. The unique (predecessorId, successorId) constraint still
+  // guards against a duplicate created by a concurrent request.
+  try {
+    const dep = await prisma.$transaction(async (tx) => {
+      const existing = await tx.taskDependency.findUnique({
+        where: { predecessorId_successorId: { predecessorId, successorId } },
+      });
+      if (existing) {
+        throw new DependencyError("This dependency already exists.", 409);
+      }
+
+      // DFS cycle check: walking forward from successor, must not reach predecessor.
+      const visited = new Set<string>();
+      const stack = [successorId];
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (current === predecessorId) {
+          throw new DependencyError("This dependency would create a cycle.", 400);
+        }
+        if (visited.has(current)) continue;
+        visited.add(current);
+        const outgoing = await tx.taskDependency.findMany({
+          where: { predecessorId: current },
+          select: { successorId: true },
+        });
+        for (const o of outgoing) stack.push(o.successorId);
+      }
+
+      return tx.taskDependency.create({ data: { predecessorId, successorId } });
     });
-    for (const o of outgoing) stack.push(o.successorId);
-  }
-  if (createsCycle) {
-    return NextResponse.json({ error: "This dependency would create a cycle." }, { status: 400 });
-  }
 
-  const dep = await prisma.taskDependency.create({
-    data: {
-      predecessorId,
-      successorId,
-    },
-  });
+    return NextResponse.json({ dependency: dep }, { status: 201 });
+  } catch (err) {
+    if (err instanceof DependencyError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
+}
 
-  return NextResponse.json({ dependency: dep }, { status: 201 });
+class DependencyError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
 }
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const originError = assertSameOrigin(request);
+  if (originError) return originError;
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
 
-  const membership = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId: params.id, userId: session.user.id } },
-  });
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this project." }, { status: 403 });
-  }
+  const authz = await requireMembership(params.id, session.user.id);
+  if (!authz.ok) return authz.response;
 
   const url = new URL(request.url);
   const depId = url.searchParams.get("depId");
