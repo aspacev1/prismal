@@ -1,0 +1,40 @@
+name: Migrate production database
+
+# Applies pending Prisma migrations to the production database after a merge
+# to main. This lives in GitHub Actions (not the Vercel build) because
+# DATABASE_URL on Vercel is injected by the Storage integration and is not
+# available to the build step — see PR #5.
+#
+# Requires the DATABASE_URL repository secret (Settings → Secrets and
+# variables → Actions): the production Postgres connection string.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "prisma/migrations/**"
+      - "prisma/schema.prisma"
+  # Manual run for the first sync or recovery (e.g. after prisma migrate resolve).
+  workflow_dispatch:
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Prisma CLI is invoked directly (pinned to the version from
+      # package.json) instead of a full `npm ci` — migrate deploy only needs
+      # the prisma/ directory, and skipping install avoids unrelated
+      # postinstall scripts.
+      - name: Apply pending migrations
+        run: npx --yes prisma@5.22.0 migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
