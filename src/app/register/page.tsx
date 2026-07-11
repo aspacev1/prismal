@@ -26,7 +26,7 @@ function RegisterForm() {
   function handleEmailChange(value: string) {
     setEmail(value);
     if (value.includes("@") && !isCorporateEmail(value)) {
-      setEmailError("please use only corporate email");
+      setEmailError("Please use a corporate email address.");
     } else {
       setEmailError(null);
     }
@@ -35,6 +35,10 @@ function RegisterForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (emailError) return;
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
 
     setSubmitting(true);
     setError(null);

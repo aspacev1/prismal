@@ -24,28 +24,39 @@ export default function PulseTab({
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [comments, setComments] = useState<CommentEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FeedFilter>("all");
 
   // Load history + comments in parallel
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
+    const fetchJson = async (url: string, key: "history" | "comments") => {
+      const r = await fetch(url, { credentials: "same-origin" });
+      if (!r.ok) throw new Error(`Failed to load ${key}`);
+      const d = await r.json();
+      return d[key] ?? [];
+    };
     Promise.all([
-      fetch(`/api/projects/${projectId}/tasks/${taskId}/history`, { credentials: "same-origin" })
-        .then((r) => r.json())
-        .then((d) => d.history ?? [])
-        .catch(() => []),
-      fetch(`/api/projects/${projectId}/tasks/${taskId}/comments`, { credentials: "same-origin" })
-        .then((r) => r.json())
-        .then((d) => d.comments ?? [])
-        .catch(() => []),
-    ]).then(([h, c]) => {
-      if (!cancelled) {
-        setHistory(h);
-        setComments(c);
-        setLoading(false);
-      }
-    });
+      fetchJson(`/api/projects/${projectId}/tasks/${taskId}/history`, "history"),
+      fetchJson(`/api/projects/${projectId}/tasks/${taskId}/comments`, "comments"),
+    ])
+      .then(([h, c]) => {
+        if (!cancelled) {
+          setHistory(h);
+          setComments(c);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          // Distinguish a real load failure from a genuinely empty feed, so the
+          // panel doesn't show "No activity yet" when history actually errored.
+          setLoadError("Couldn't load activity. Try reopening this task.");
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, [taskId, projectId, refreshKey]);
 
@@ -123,6 +134,10 @@ export default function PulseTab({
         {loading ? (
           <Typography variant="body2" color="text.disabled" sx={{ fontSize: 12, textAlign: "center", py: 4 }}>
             Loading activity…
+          </Typography>
+        ) : loadError ? (
+          <Typography variant="body2" color="error.main" sx={{ fontSize: 12, textAlign: "center", py: 4 }}>
+            {loadError}
           </Typography>
         ) : filteredFeed.length === 0 ? (
           <Typography variant="body2" color="text.disabled" sx={{ fontSize: 12, textAlign: "center", py: 4 }}>

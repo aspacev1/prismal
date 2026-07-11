@@ -47,7 +47,7 @@ describe("registerSchema", () => {
     const result = registerSchema.safeParse({ email: "user@gmail.com", password: "longenough" });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].message).toBe("please use only corporate email");
+      expect(result.error.issues[0].message).toBe("Please use a corporate email address.");
     }
   });
 

@@ -92,7 +92,7 @@ export default function ProjectDetailsTab({
     setSaveSuccess(false);
 
     const payload = {
-      name: name.trim().toUpperCase(),
+      name: name.trim(),
       color: color || null,
     };
 

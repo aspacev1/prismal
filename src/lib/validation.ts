@@ -14,7 +14,7 @@ export function isCorporateEmail(email: string): boolean {
 export const emailSchema = z.string().trim().toLowerCase().email("Enter a valid email address.");
 
 export const registerSchema = z.object({
-  email: emailSchema.refine(isCorporateEmail, { message: "please use only corporate email" }),
+  email: emailSchema.refine(isCorporateEmail, { message: "Please use a corporate email address." }),
   password: z.string().min(8, "Password must be at least 8 characters."),
 });
 
@@ -38,7 +38,12 @@ export const inviteEmailListSchema = z.object({
 export const updateProjectSchema = z.object({
   name: z.string().trim().min(1).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color.").optional().nullable(),
-  imageUrl: z.string().url().optional().nullable(),
+  imageUrl: z
+    .string()
+    .url()
+    .refine((u) => /^https?:\/\//i.test(u), { message: "Image URL must be http(s)." })
+    .optional()
+    .nullable(),
 }).strict();
 
 export const updateMemberSchema = z.object({
