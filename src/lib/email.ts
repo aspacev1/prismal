@@ -1,14 +1,21 @@
 import { Resend } from "resend";
 
-const apiKey = process.env.RESEND_API_KEY;
+// Instantiated lazily, not at module scope: the Resend constructor throws when
+// the API key is absent, and Next.js imports this module while collecting page
+// data at build time — where RESEND_API_KEY is typically not set. A missing
+// key must fail the send at runtime with a clear error, not the build.
+let resendClient: Resend | null = null;
 
-if (!apiKey || !apiKey.startsWith("re_")) {
-  console.error(
-    "[email] RESEND_API_KEY is missing or does not look like a real Resend key (should start with 're_'). Invite emails will fail."
-  );
+function getResend(): Resend {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey || !apiKey.startsWith("re_")) {
+    throw new Error(
+      "RESEND_API_KEY is missing or does not look like a real Resend key (should start with 're_')."
+    );
+  }
+  if (!resendClient) resendClient = new Resend(apiKey);
+  return resendClient;
 }
-
-const resend = new Resend(apiKey);
 
 // inviterName/projectName come from user-controlled data (onboarding name,
 // project title) and land in an HTML email body — escape before interpolating.
@@ -32,7 +39,7 @@ export async function sendInviteEmail(
 
   // The Resend SDK resolves with { data, error } — a rejected-style failure
   // can come back as a resolved promise with `error` set, so we inspect both.
-  const { error } = await resend.emails.send({
+  const { error } = await getResend().emails.send({
     from: process.env.EMAIL_FROM ?? "flowline <onboarding@resend.dev>",
     to,
     subject: `${inviterName} invited you to ${projectName} on flowline`,
