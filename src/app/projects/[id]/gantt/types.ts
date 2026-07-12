@@ -28,7 +28,6 @@ export type TaskRow = {
   priority: string;
   order: number;
   color: string | null;
-  isMilestone: boolean;
   projectId: string;
   parentId: string | null;
   assigneeId: string | null;

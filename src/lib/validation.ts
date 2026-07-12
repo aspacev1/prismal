@@ -76,7 +76,6 @@ export const createTaskSchema = z.object({
   priority: z.enum(TASK_PRIORITIES).optional(),
   order: z.number().int().optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color.").optional().nullable(),
-  isMilestone: z.boolean().optional(),
   parentId: z.string().optional().nullable(),
   assigneeId: z.string().optional().nullable(),
 }).strict();
@@ -93,7 +92,6 @@ export const updateTaskSchema = z.object({
   priority: z.enum(TASK_PRIORITIES).optional(),
   order: z.number().int().optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a hex color.").optional().nullable(),
-  isMilestone: z.boolean().optional(),
   parentId: z.string().optional().nullable(),
   assigneeId: z.string().optional().nullable(),
   confirmedDelay: z.boolean().optional(),

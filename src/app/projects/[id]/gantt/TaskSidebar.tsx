@@ -7,6 +7,11 @@ import IconButton from "@mui/material/IconButton";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import AddIcon from "@mui/icons-material/Add";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import CheckIcon from "@mui/icons-material/Check";
+import CloseIcon from "@mui/icons-material/Close";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import ViewListIcon from "@mui/icons-material/ViewList";
 import {
   DndContext,
   closestCenter,
@@ -26,6 +31,7 @@ import {
   HEADER_HEIGHT,
   ROW_HEIGHT,
   SUB_ROW_HEIGHT,
+  SIDEBAR_COLLAPSED_WIDTH,
   userInitials,
   userFullName,
   isStatus,
@@ -45,11 +51,17 @@ export default function TaskSidebar({
   onToggleExpand,
   childCounts,
   onAddChild,
+  onAddEpic,
   rollupsByCategory,
   onReorder,
   onReparent,
   bodyRef,
   onBodyScroll,
+  width,
+  collapsed,
+  onToggleCollapsed,
+  onCollapseAllEpics,
+  onRestoreExpanded,
 }: {
   rows: TaskRow[];
   members: MemberOption[];
@@ -60,20 +72,34 @@ export default function TaskSidebar({
   onToggleExpand: (id: string) => void;
   childCounts: Record<string, number>;
   onAddChild: (parentId: string, name: string) => Promise<{ ok: boolean }>;
+  onAddEpic: (name: string) => Promise<{ ok: boolean }>;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
   onReorder: (items: { id: string; order: number }[]) => void;
   onReparent: (taskId: string, newParentId: string | null, siblingOrder: { id: string; order: number }[]) => void;
   bodyRef?: React.Ref<HTMLDivElement>;
   onBodyScroll?: () => void;
+  width: number;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onCollapseAllEpics: () => void;
+  onRestoreExpanded: (saved: Set<string>) => void;
 }) {
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
   const [inlineAddValue, setInlineAddValue] = useState("");
+  const [isAddingEpic, setIsAddingEpic] = useState(false);
+  const [epicInputValue, setEpicInputValue] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const epicInputRef = useRef<HTMLInputElement | null>(null);
+  const expandedBeforeDragRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     if (inlineAddParentId && inputRef.current) inputRef.current.focus();
   }, [inlineAddParentId]);
+
+  useEffect(() => {
+    if (isAddingEpic && epicInputRef.current) epicInputRef.current.focus();
+  }, [isAddingEpic]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -82,6 +108,7 @@ export default function TaskSidebar({
   // Separate top-level rows from subtask groups
   const topLevelRows = useMemo(() => rows.filter((r) => !r.isSubtask && !r.parentId), [rows]);
   const topLevelIds = useMemo(() => topLevelRows.map((r) => r.id), [topLevelRows]);
+  const hasEpics = useMemo(() => topLevelRows.some((r) => r.kind === "category"), [topLevelRows]);
 
   // Map of parentId → child rows (for nested sortable)
   const childRowsByParent = useMemo(() => {
@@ -116,9 +143,40 @@ export default function TaskSidebar({
     setInlineAddValue("");
   }
 
+  function openAddEpic() {
+    setIsAddingEpic(true);
+    setEpicInputValue("");
+  }
+
+  function openAddTaskForLastEpic() {
+    const lastEpic = [...topLevelRows].reverse().find((r) => r.kind === "category");
+    if (!lastEpic) return;
+    handleAddChildClick(lastEpic.id);
+  }
+
+  async function commitAddEpic() {
+    const name = epicInputValue.trim();
+    if (!name) { setIsAddingEpic(false); setEpicInputValue(""); return; }
+    await onAddEpic(name);
+    setIsAddingEpic(false);
+    setEpicInputValue("");
+  }
+
+  function cancelAddEpic() {
+    setIsAddingEpic(false);
+    setEpicInputValue("");
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
+
+    // Restore the expand state that was collapsed at drag-start for a category.
+    if (expandedBeforeDragRef.current) {
+      onRestoreExpanded(expandedBeforeDragRef.current);
+      expandedBeforeDragRef.current = null;
+    }
+
     if (!over || active.id === over.id) return;
 
     const activeIdStr = String(active.id);
@@ -150,7 +208,7 @@ export default function TaskSidebar({
       const targetSiblings = overParent
         ? (childRowsByParent[overParent] ?? [])
         : topLevelRows.filter((r) => r.kind !== "category");
-      
+
       // Can't drop a task onto a category row if the category is the over target
       // — instead, dropping on a category should move the task INTO that category
       if (overRow.kind === "category" && !overParent) {
@@ -172,13 +230,13 @@ export default function TaskSidebar({
       // Normal cross-parent: insert at the over task's position
       const overIndex = targetSiblings.findIndex((r) => r.id === overIdStr);
       if (overIndex === -1) return;
-      
+
       // Build new sibling list: remove active from old position, insert at over position
       const newSiblings = [...targetSiblings];
       newSiblings.splice(overIndex, 0, activeRow);
-      
+
       onReparent(activeIdStr, overParent, newSiblings.map((r, idx) => ({ id: r.id, order: idx })));
-      
+
       // Reorder the old siblings (remove the dragged task)
       if (activeParent) {
         const oldSiblings = (childRowsByParent[activeParent] ?? []).filter((r) => r.id !== activeIdStr);
@@ -191,19 +249,28 @@ export default function TaskSidebar({
   }
 
   function handleDragStart(event: { active: { id: string | number } }) {
-    setActiveId(String(event.active.id));
+    const id = String(event.active.id);
+    setActiveId(id);
+    // Auto-collapse all epics while dragging a category so drop targets are clear.
+    const activeRow = rows.find((r) => r.id === id);
+    if (activeRow?.kind === "category") {
+      expandedBeforeDragRef.current = new Set(expanded);
+      onCollapseAllEpics();
+    }
   }
 
   return (
     <Box
       sx={{
-        width: 280,
+        width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : width,
         flexShrink: 0,
         borderRight: "1px solid",
         borderColor: "divider",
         display: "flex",
         flexDirection: "column",
         bgcolor: "background.paper",
+        transition: "width 0.2s ease",
+        overflow: "hidden",
       }}
     >
       <Box
@@ -211,19 +278,44 @@ export default function TaskSidebar({
           height: HEADER_HEIGHT,
           borderBottom: "1px solid",
           borderColor: "divider",
-          px: 2,
+          px: collapsed ? 0 : 2,
           display: "flex",
           alignItems: "center",
+          justifyContent: collapsed ? "center" : "space-between",
         }}
       >
-        <Typography
-          variant="caption"
-          fontWeight={700}
-          color="text.secondary"
-          sx={{ textTransform: "uppercase", letterSpacing: 0.5, fontSize: 11 }}
-        >
-          Task
-        </Typography>
+        {collapsed ? (
+          <IconButton
+            size="small"
+            onClick={onToggleCollapsed}
+            title="Expand sidebar"
+            sx={{ p: 0.5 }}
+          >
+            <ChevronRightIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        ) : (
+          <>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <ViewListIcon sx={{ fontSize: 16, color: "text.secondary" }} />
+              <Typography
+                variant="caption"
+                fontWeight={700}
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: 0.5, fontSize: 11 }}
+              >
+                Epic / Task
+              </Typography>
+            </Box>
+            <IconButton
+              size="small"
+              onClick={onToggleCollapsed}
+              title="Collapse sidebar"
+              sx={{ p: 0.5 }}
+            >
+              <ChevronLeftIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </>
+        )}
       </Box>
 
       <Box ref={bodyRef} onScroll={onBodyScroll} sx={{ overflowY: "auto", flex: 1 }}>
@@ -262,6 +354,7 @@ export default function TaskSidebar({
                   inputRef={inputRef}
                   childIds={childIds}
                   isExpanded={isExpanded}
+                  collapsed={collapsed}
                 >
                   {/* Nested SortableContext for subtasks */}
                   {isExpanded && children.length > 0 && (
@@ -299,6 +392,7 @@ export default function TaskSidebar({
                             inputRef={inputRef}
                             childIds={grandChildIds}
                             isExpanded={childExpanded}
+                            collapsed={collapsed}
                           >
                             {childExpanded && grandChildren.length > 0 && (
                               <SortableContext items={grandChildIds} strategy={verticalListSortingStrategy}>
@@ -325,6 +419,7 @@ export default function TaskSidebar({
                                     inputRef={inputRef}
                                     childIds={[]}
                                     isExpanded={false}
+                                    collapsed={collapsed}
                                   >
                                     {/* Subtasks have no children of their own (3-level cap) */}
                                   </SortableRow>
@@ -341,6 +436,93 @@ export default function TaskSidebar({
             })}
           </SortableContext>
         </DndContext>
+
+        {/* Root-level add row — sticky to the bottom of the scroll area, so it
+            sits right after the last row when the list is short, and stays
+            pinned in view while scrolling a long list. Only root-level epics
+            can be created here; every task must be mapped to an epic. */}
+        {!collapsed && (
+          isAddingEpic ? (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                px: 1.5,
+                height: SUB_ROW_HEIGHT,
+                flexShrink: 0,
+                position: "sticky",
+                bottom: 0,
+                zIndex: 1,
+                borderTop: "1px solid",
+                borderColor: "divider",
+                bgcolor: "#F5F6FE",
+              }}
+            >
+              <Box sx={{ width: 16, flexShrink: 0 }} />
+              <input
+                ref={epicInputRef}
+                value={epicInputValue}
+                onChange={(e) => setEpicInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); commitAddEpic(); }
+                  if (e.key === "Escape") { cancelAddEpic(); }
+                }}
+                placeholder="Epic name…"
+                style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 13, fontWeight: 500, color: "inherit" }}
+              />
+              <IconButton size="small" onClick={commitAddEpic} disabled={!epicInputValue.trim()}
+                onMouseDown={(e) => e.preventDefault()}
+                sx={{ color: "success.main", p: 0.25, "&.Mui-disabled": { color: "text.disabled" } }} title="Save">
+                <CheckIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+              <IconButton size="small" onClick={cancelAddEpic}
+                onMouseDown={(e) => e.preventDefault()}
+                sx={{ color: "text.disabled", p: 0.25 }} title="Cancel">
+                <CloseIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Box>
+          ) : (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+                px: 1.5,
+                py: 1,
+                flexShrink: 0,
+                position: "sticky",
+                bottom: 0,
+                zIndex: 1,
+                borderTop: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
+              }}
+            >
+              <Box
+                component="span"
+                onClick={openAddEpic}
+                sx={{ fontSize: 12, color: "text.disabled", fontWeight: 600, cursor: "pointer", "&:hover": { color: "primary.main" } }}
+              >
+                + Add an epic
+              </Box>
+              <Box
+                component="span"
+                onClick={() => { if (hasEpics) openAddTaskForLastEpic(); }}
+                sx={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: hasEpics ? "text.disabled" : "rgba(0,0,0,0.22)",
+                  cursor: hasEpics ? "pointer" : "not-allowed",
+                  "&:hover": hasEpics ? { color: "primary.main" } : {},
+                }}
+                title={hasEpics ? "" : "Сначала создайте эпик"}
+              >
+                + Add a task
+              </Box>
+            </Box>
+          )
+        )}
       </Box>
     </Box>
   );
@@ -368,6 +550,7 @@ function SortableRow({
   inputRef,
   childIds: _childIds,
   isExpanded,
+  collapsed = false,
   ...rest
 }: {
   row: TaskRow;
@@ -390,6 +573,7 @@ function SortableRow({
   inputRef: React.RefObject<HTMLInputElement | null>;
   childIds: string[];
   isExpanded: boolean;
+  collapsed?: boolean;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const {
     attributes,
@@ -420,6 +604,43 @@ function SortableRow({
     transition: transition || "transform 200ms ease",
     opacity: isDragging || isSortableDragging ? 0.5 : 1,
   };
+
+  if (collapsed) {
+    return (
+      <Box ref={setNodeRef} style={style} {...rest}>
+        <Box
+          onClick={() => onRowSelect(row.id)}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: row.isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            cursor: "pointer",
+            transition: "background-color 0.15s",
+            borderLeft: isCategory
+              ? "3px solid #5B63D6"
+              : row.isSubtask
+                ? "3px solid transparent"
+                : "3px solid #2D6EEF",
+            bgcolor: isSelected
+              ? "rgba(79,93,255,0.12)"
+              : isCategory
+                ? "rgba(91,99,214,0.12)"
+                : "background.paper",
+            "&:hover": {
+              bgcolor: isSelected ? "rgba(79,93,255,0.18)" : "rgba(0,0,0,0.04)",
+            },
+          }}
+          title={row.name}
+        >
+          <StatusDot status={row.status} size={8} />
+        </Box>
+        {rest.children}
+      </Box>
+    );
+  }
 
   return (
     <Box ref={setNodeRef} style={style} {...rest}>

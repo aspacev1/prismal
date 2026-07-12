@@ -3,6 +3,10 @@ export const ROW_HEIGHT = 44;
 export const SUB_ROW_HEIGHT = 38;
 export const HEADER_HEIGHT = 52;
 export const SIDEBAR_WIDTH = 280;
+export const SIDEBAR_MIN_WIDTH = 200;
+export const SIDEBAR_MAX_WIDTH = 440;
+export const SIDEBAR_DEFAULT_WIDTH = 280;
+export const SIDEBAR_COLLAPSED_WIDTH = 44;
 export const DETAIL_PANEL_WIDTH = 360;
 
 export const HOURS_PER_DAY = 8;

@@ -863,6 +863,7 @@ export default function GanttGrid({
                   title={`${row.name} — not yet planned`}
                 />
               )}
+
             </Box>
           );
         })}

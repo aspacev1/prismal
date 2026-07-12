@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createProjectSchema } from "@/lib/validation";
 import { assertSameOrigin } from "@/lib/origin";
@@ -22,21 +23,38 @@ export async function POST(request: NextRequest) {
 
   const { name } = parsed.data;
 
-  const project = await prisma.$transaction(async (tx) => {
-    const created = await tx.project.create({
-      data: {
-        name,
-        createdById: session.user.id,
-        companyId: session.user.companyId,
-      },
+  try {
+    const project = await prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
+        data: {
+          name,
+          createdById: session.user.id,
+          companyId: session.user.companyId,
+        },
+      });
+      await tx.projectMember.create({
+        data: { projectId: created.id, userId: session.user.id, role: "owner" },
+      });
+      return created;
     });
-    await tx.projectMember.create({
-      data: { projectId: created.id, userId: session.user.id, role: "owner" },
-    });
-    return created;
-  });
 
-  return NextResponse.json({ id: project.id }, { status: 201 });
+    return NextResponse.json({ id: project.id }, { status: 201 });
+  } catch (err) {
+    // FK violation on createdById/companyId → the session references a user or
+    // company that no longer exists in the DB. Treat as auth failure so the
+    // user is prompted to log in again rather than seeing a generic error.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") {
+      return NextResponse.json(
+        { error: "Your session is invalid. Please log in again." },
+        { status: 401 }
+      );
+    }
+    console.error("[projects/POST] failed:", err);
+    return NextResponse.json(
+      { error: "Could not create project. Please try again." },
+      { status: 500 }
+    );
+  }
 }
 
 // Not currently called by the UI — /workspace queries Prisma directly as a
