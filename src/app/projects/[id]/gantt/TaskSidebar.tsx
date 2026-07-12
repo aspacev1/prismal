@@ -436,9 +436,10 @@ export default function TaskSidebar({
           </SortableContext>
         </DndContext>
 
-        {/* Root-level add row — inside the scrollable area, after the last
-            task/subtask. Only root-level epics can be created here; every task
-            must be mapped to an epic. */}
+        {/* Root-level add row — sticky to the bottom of the scroll area, so it
+            sits right after the last row when the list is short, and stays
+            pinned in view while scrolling a long list. Only root-level epics
+            can be created here; every task must be mapped to an epic. */}
         {!collapsed && (
           inlineAddMode === "epic" ? (
             <Box
@@ -448,9 +449,13 @@ export default function TaskSidebar({
                 gap: 0.5,
                 px: 1.5,
                 height: SUB_ROW_HEIGHT,
-                borderBottom: "1px solid",
+                flexShrink: 0,
+                position: "sticky",
+                bottom: 0,
+                zIndex: 1,
+                borderTop: "1px solid",
                 borderColor: "divider",
-                bgcolor: "rgba(79,93,255,0.04)",
+                bgcolor: "#F5F6FE",
               }}
             >
               <Box sx={{ width: 16, flexShrink: 0 }} />
@@ -484,6 +489,13 @@ export default function TaskSidebar({
                 gap: 2,
                 px: 1.5,
                 py: 1,
+                flexShrink: 0,
+                position: "sticky",
+                bottom: 0,
+                zIndex: 1,
+                borderTop: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
               }}
             >
               <Box

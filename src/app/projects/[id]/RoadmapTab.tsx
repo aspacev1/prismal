@@ -690,25 +690,6 @@ export default function RoadmapTab({
     }
   }, [projectId, members, fetchTasks]);
 
-  const addCategory = useCallback(async () => {
-    const res = await fetch(`/api/projects/${projectId}/tasks`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({
-        name: "New category",
-        kind: "category",
-        status: "todo",
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setTasks((prev) => [...prev, { ...data.task, deps: [] }]);
-      setSelectedId(data.task.id);
-      fetchTasks();
-    }
-  }, [projectId, fetchTasks]);
-
   // Create a child (Task under a Category, or Subtask under a Task).
   // Used by the hover-"+" inline add. The parent's kind determines the
   // semantic level of the new row but the API just needs parentId + kind=task.
@@ -1013,24 +994,16 @@ export default function RoadmapTab({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Card sx={{ boxShadow: "0 4px 16px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)" }}>
-        <CardContent sx={{ p: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 4 }}>
+        <CardContent sx={{ p: view === "gantt" && !loading ? 0 : 4 }}>
           <Box
             sx={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
-              mb: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 3,
-              px: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 0,
+              justifyContent: "flex-end",
+              mb: view === "gantt" && !loading ? 0 : 3,
+              px: view === "gantt" && !loading ? 0 : 0,
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={addCategory}>
-                Category
-              </Button>
-              <Button variant="contained" size="small" startIcon={<AddIcon />} onClick={addTask}>
-                Task
-              </Button>
-            </Box>
             <ToggleButtonGroup
               value={view}
               exclusive
@@ -1049,7 +1022,7 @@ export default function RoadmapTab({
             </ToggleButtonGroup>
           </Box>
 
-          {view === "gantt" && !loading && rootTasks.length > 0 && (
+          {view === "gantt" && !loading && (
             <Box sx={{ display: "flex", height: 640, overflow: "hidden", borderRadius: 1 }}>
               <TaskSidebar
                 rows={rows}
@@ -1112,21 +1085,7 @@ export default function RoadmapTab({
             </Typography>
           )}
 
-          {!loading && !error && rootTasks.length === 0 && tasks.length > 0 && onlyDependent && (
-            <Box sx={{ textAlign: "center", py: 6 }}>
-              <Typography variant="body1" color="text.secondary" gutterBottom>
-                No dependent tasks
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                No tasks have dependencies yet. Turn off &ldquo;Dependent only&rdquo; to see all tasks.
-              </Typography>
-              <Button variant="outlined" size="small" onClick={() => setOnlyDependent(false)}>
-                Show all tasks
-              </Button>
-            </Box>
-          )}
-
-          {!loading && !error && rootTasks.length === 0 && !(tasks.length > 0 && onlyDependent) && (
+          {!loading && !error && view === "list" && rootTasks.length === 0 && (
             <Box sx={{ textAlign: "center", py: 6 }}>
               <Typography variant="body1" color="text.secondary" gutterBottom>
                 No tasks yet
