@@ -102,7 +102,6 @@ model Task {
   priority        String   @default("medium")
   order           Int      @default(0)
   color           String?
-  isMilestone     Boolean  @default(false)
   projectId       String
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parentId        String?
