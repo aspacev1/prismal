@@ -48,6 +48,8 @@ export default function TaskSidebar({
   rollupsByCategory,
   onReorder,
   onReparent,
+  bodyRef,
+  onBodyScroll,
 }: {
   rows: TaskRow[];
   members: MemberOption[];
@@ -61,6 +63,8 @@ export default function TaskSidebar({
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
   onReorder: (items: { id: string; order: number }[]) => void;
   onReparent: (taskId: string, newParentId: string | null, siblingOrder: { id: string; order: number }[]) => void;
+  bodyRef?: React.Ref<HTMLDivElement>;
+  onBodyScroll?: () => void;
 }) {
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
   const [inlineAddValue, setInlineAddValue] = useState("");
@@ -222,7 +226,7 @@ export default function TaskSidebar({
         </Typography>
       </Box>
 
-      <Box sx={{ overflowY: "auto", flex: 1 }}>
+      <Box ref={bodyRef} onScroll={onBodyScroll} sx={{ overflowY: "auto", flex: 1 }}>
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}

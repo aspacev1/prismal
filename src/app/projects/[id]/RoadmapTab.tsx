@@ -232,6 +232,21 @@ export default function RoadmapTab({
   // user from landing at the project start date (potentially far in the past)
   // and having to scroll forward through weeks of past work to find today.
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // The sidebar and the Gantt grid are two side-by-side panes that must scroll
+  // vertically as one. They each own their vertical scroll (a single shared
+  // scroller can't also keep the Gantt's horizontal scroll independent), so
+  // their scrollTop is mirrored here. The guard prevents the mirrored write
+  // from echoing back into an infinite scroll loop.
+  const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncingScroll = useRef(false);
+  const syncScrollTop = useCallback((from: HTMLDivElement | null, to: HTMLDivElement | null) => {
+    if (!from || !to || syncingScroll.current) return;
+    syncingScroll.current = true;
+    to.scrollTop = from.scrollTop;
+    requestAnimationFrame(() => {
+      syncingScroll.current = false;
+    });
+  }, []);
   useEffect(() => {
     if (scrollRef.current && view === "gantt" && !loading) {
       const todayOffsetPx = daysBetween(rangeStart, getToday()) * DAY_WIDTH;
@@ -1002,8 +1017,14 @@ export default function RoadmapTab({
                 rollupsByCategory={rollupsByCategory}
                 onReorder={handleReorder}
                 onReparent={handleReparent}
+                bodyRef={sidebarScrollRef}
+                onBodyScroll={() => syncScrollTop(sidebarScrollRef.current, scrollRef.current)}
               />
-              <Box ref={scrollRef} sx={{ flex: 1, overflowX: "auto", overflowY: "hidden" }}>
+              <Box
+                ref={scrollRef}
+                onScroll={() => syncScrollTop(scrollRef.current, sidebarScrollRef.current)}
+                sx={{ flex: 1, overflowX: "auto", overflowY: "auto" }}
+              >
                 <GanttGrid
                   rows={rows}
                   members={members}
