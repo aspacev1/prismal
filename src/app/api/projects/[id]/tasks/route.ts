@@ -26,9 +26,14 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     orderBy: [{ order: "asc" }, { createdAt: "asc" }],
   });
 
+  // A row's `deps` lists its predecessors. Prisma's `successorDeps` relation
+  // holds the rows where this task is the successor — i.e. exactly the rows
+  // naming its predecessors. (The previous loop read `predecessorDeps`, which
+  // attributed each dependency to the predecessor task instead, so arrows
+  // survived only as the client's optimistic state and vanished on reload.)
   const depsBySuccessor: Record<string, { predecessorId: string }[]> = {};
   for (const t of tasks) {
-    for (const d of t.predecessorDeps) {
+    for (const d of t.successorDeps) {
       if (!depsBySuccessor[t.id]) depsBySuccessor[t.id] = [];
       depsBySuccessor[t.id].push({ predecessorId: d.predecessorId });
     }
@@ -39,6 +44,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     name: t.name,
     description: t.description,
     kind: t.kind,
+    scheduleStatus: t.scheduleStatus,
     startDate: t.startDate ? t.startDate.toISOString() : null,
     durationDays: t.durationDays,
     originalEndDate: t.originalEndDate ? t.originalEndDate.toISOString() : null,
@@ -65,7 +71,9 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
         }
       : null,
     deps: depsBySuccessor[t.id] ?? [],
-    successorDeps: t.successorDeps.map((sd) => ({ id: sd.id })),
+    // Rows where this task is the predecessor (it has successors) — only the
+    // presence matters to consumers (the "dependent only" filter).
+    successorDeps: t.predecessorDeps.map((sd) => ({ id: sd.id })),
   }));
 
   return NextResponse.json({ tasks: mapped });
@@ -90,7 +98,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { parentId, assigneeId, startDate, durationDays, kind, ...rest } = parsed.data;
+  const { parentId, assigneeId, startDate, durationDays, kind, scheduleStatus, ...rest } = parsed.data;
 
   if (parentId) {
     const parent = await prisma.task.findUnique({ where: { id: parentId } });
@@ -135,9 +143,50 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
   }
 
-  const start = startDate ? new Date(startDate) : null;
-  const duration = durationDays ?? 0;
-  const originalEndDate = start && duration > 0 ? workEndDate(start, duration) : null;
+  let start = startDate ? new Date(startDate) : null;
+  let duration = durationDays ?? 0;
+  // Default: dates supplied by an API caller without an explicit status are
+  // user-chosen ("confirmed"). The UI passes "estimated" for system-guessed
+  // defaults and "unscheduled" for backlog creation explicitly.
+  let resolvedScheduleStatus = scheduleStatus ?? "confirmed";
+
+  if (kind === "milestone") {
+    // Milestones always have a date, so they can never live in the backlog.
+    if (resolvedScheduleStatus === "unscheduled") {
+      return NextResponse.json(
+        { error: "Milestones always have a date and cannot be unscheduled." },
+        { status: 400 }
+      );
+    }
+    if (!start) {
+      return NextResponse.json({ error: "A milestone requires a date." }, { status: 400 });
+    }
+    // A milestone is a zero-duration point. The date means "done by end of
+    // this day". An import/API payload with a duration > 0 is normalized to
+    // the range's end date.
+    if (duration > 0) {
+      console.warn(
+        `Milestone "${rest.name}" created with durationDays=${duration}; normalizing to its end date.`
+      );
+      start = workEndDate(start, duration);
+      duration = 0;
+    }
+  }
+
+  if (resolvedScheduleStatus === "unscheduled") {
+    // Unscheduled tasks have no dates by definition.
+    start = null;
+    duration = 0;
+  }
+
+  // Estimated dates are a guess, not a plan — don't baseline them. The
+  // baseline (originalEndDate/originalDurationDays) is set when the user
+  // confirms real dates, so a first drag never trips delay detection.
+  const originalEndDate =
+    resolvedScheduleStatus === "confirmed" && start && duration > 0
+      ? workEndDate(start, duration)
+      : null;
+  const originalDuration = resolvedScheduleStatus === "confirmed" ? duration : 0;
 
   // Read the current max order and insert in one serializable transaction so two
   // concurrent creates can't both read the same max and collide on `order`.
@@ -152,10 +201,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         data: {
           ...rest,
           kind: kind ?? "task",
+          scheduleStatus: resolvedScheduleStatus,
           startDate: start,
           durationDays: duration,
           originalEndDate,
-          originalDurationDays: duration,
+          originalDurationDays: originalDuration,
           parentId: parentId || null,
           assigneeId: assigneeId || null,
           createdById: session.user.id,

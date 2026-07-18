@@ -9,7 +9,11 @@ export type AssigneePerson = {
   };
 };
 
-export type TaskKind = "category" | "task";
+export type TaskKind = "category" | "task" | "milestone";
+
+// "estimated" = system-guessed dates (ghost bar/diamond), "confirmed" = user
+// committed the dates, "unscheduled" = parked in the backlog with no dates.
+export type ScheduleStatus = "estimated" | "confirmed" | "unscheduled";
 
 export type DepRef = { predecessorId: string };
 
@@ -18,6 +22,7 @@ export type TaskRow = {
   name: string;
   description: string | null;
   kind: TaskKind;
+  scheduleStatus: ScheduleStatus;
   startDate: string | null;
   durationDays: number;
   originalEndDate: string | null;

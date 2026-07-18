@@ -33,7 +33,7 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { parentId, assigneeId, startDate, durationDays, confirmedDelay, reason, kind, ...rest } = parsed.data;
+  const { parentId, assigneeId, startDate, durationDays, confirmedDelay, reason, kind, scheduleStatus, ...rest } = parsed.data;
 
   if (parentId !== undefined) {
     if (parentId) {
@@ -91,13 +91,89 @@ export async function PATCH(
     }
   }
 
-  const resolvedStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
-  const resolvedDuration = durationDays ?? existing.durationDays;
+  const isConversion = kind !== undefined && kind !== existing.kind;
+  const finalKind = kind ?? existing.kind;
 
-  // Schedule delay detection — only when the task has actual dates (planned tasks).
-  // Unplanned tasks (null start or duration 0) skip delay detection.
+  // Task ↔ milestone conversion guards and derived schedule effects.
+  // Conversion overrides apply only where the patch didn't supply explicit
+  // dates, so undo (which sends the exact prior dates) round-trips losslessly.
+  let conversionStart: Date | undefined;
+  let conversionDuration: number | undefined;
+  if (isConversion && kind === "milestone") {
+    if (existing.kind === "category") {
+      return NextResponse.json(
+        { error: "An epic cannot be converted to a milestone." },
+        { status: 400 }
+      );
+    }
+    const childCount = await prisma.task.count({ where: { parentId: params.taskId } });
+    if (childCount > 0) {
+      return NextResponse.json({ error: "Milestones can't contain subtasks." }, { status: 400 });
+    }
+    if (existing.scheduleStatus === "unscheduled" || !existing.startDate) {
+      return NextResponse.json(
+        { error: "Schedule this task first — milestones always have a date." },
+        { status: 400 }
+      );
+    }
+    // Collapse the bar to its end date ("done by end of this day").
+    if (startDate === undefined) {
+      conversionStart = workEndDate(existing.startDate, existing.durationDays);
+    }
+    if (durationDays === undefined) conversionDuration = 0;
+  }
+  if (isConversion && existing.kind === "milestone" && kind === "task") {
+    // Expand the diamond into a 1-day bar ending on the milestone date.
+    if (durationDays === undefined) conversionDuration = 1;
+  }
+
+  if (scheduleStatus === "unscheduled" && finalKind === "milestone") {
+    return NextResponse.json(
+      { error: "Milestones always have a date and cannot be unscheduled." },
+      { status: 400 }
+    );
+  }
+
+  // Explicit status wins (undo sends it to restore a prior state). Otherwise,
+  // directly manipulating the dates of an estimated or unscheduled item —
+  // dragging the ghost bar, resizing it, entering dates, dropping from the
+  // backlog — is the act that confirms them.
+  let newScheduleStatus = scheduleStatus;
+  if (
+    newScheduleStatus === undefined &&
+    existing.scheduleStatus !== "confirmed" &&
+    (startDate !== undefined || durationDays !== undefined)
+  ) {
+    newScheduleStatus = "confirmed";
+  }
+
+  let resolvedStart =
+    startDate !== undefined
+      ? startDate
+        ? new Date(startDate)
+        : null
+      : conversionStart ?? existing.startDate;
+  let resolvedDuration = durationDays ?? conversionDuration ?? existing.durationDays;
+  if (finalKind === "milestone" && resolvedDuration > 0) {
+    return NextResponse.json({ error: "Milestones have no duration." }, { status: 400 });
+  }
+  if (newScheduleStatus === "unscheduled") {
+    // Unscheduled tasks have no dates by definition.
+    resolvedStart = null;
+    resolvedDuration = 0;
+  }
+
+  // Schedule delay detection — only for committed plans. Estimated dates are
+  // a system guess and unscheduled tasks have no plan, so changing either is
+  // frictionless (this is what makes "one drag fully schedules a fresh task"
+  // work). Conversions and explicit status reverts (undo) are also exempt:
+  // their date changes are mechanical, not a slipped deadline.
   const touchesSchedule = startDate !== undefined || durationDays !== undefined;
-  if (touchesSchedule && resolvedStart && resolvedDuration > 0) {
+  const planGuardsApply =
+    existing.scheduleStatus === "confirmed" &&
+    !isConversion &&
+    scheduleStatus === undefined;
+  if (touchesSchedule && planGuardsApply && resolvedStart && resolvedDuration > 0) {
     const newEnd = workEndDate(resolvedStart, resolvedDuration);
     const isDelay =
       existing.originalEndDate && daysBetween(new Date(existing.originalEndDate), newEnd) > 0;
@@ -124,10 +200,33 @@ export async function PATCH(
   // Build the update data
   const updateData: Record<string, unknown> = { ...rest };
   if (kind !== undefined) updateData.kind = kind;
-  if (startDate !== undefined) updateData.startDate = startDate ? new Date(startDate) : null;
-  if (durationDays !== undefined) updateData.durationDays = durationDays;
+  if (startDate !== undefined || conversionStart !== undefined || newScheduleStatus === "unscheduled") {
+    updateData.startDate = resolvedStart;
+  }
+  if (durationDays !== undefined || conversionDuration !== undefined || newScheduleStatus === "unscheduled") {
+    updateData.durationDays = resolvedDuration;
+  }
+  if (newScheduleStatus !== undefined) updateData.scheduleStatus = newScheduleStatus;
   if (parentId !== undefined) updateData.parentId = parentId || null;
   if (assigneeId !== undefined) updateData.assigneeId = assigneeId || null;
+
+  // Baseline maintenance. Reverting to a guess (undo) or to the backlog
+  // clears the baseline; confirming previously-unconfirmed dates — or
+  // reshaping via conversion — establishes a fresh baseline at the final
+  // schedule so later delay detection measures from what the user committed.
+  const finalScheduleStatus = newScheduleStatus ?? existing.scheduleStatus;
+  if (finalScheduleStatus === "estimated" || finalScheduleStatus === "unscheduled") {
+    updateData.originalEndDate = null;
+    updateData.originalDurationDays = 0;
+  } else if (
+    (newScheduleStatus === "confirmed" && existing.scheduleStatus !== "confirmed") ||
+    isConversion
+  ) {
+    if (resolvedStart) {
+      updateData.originalEndDate = workEndDate(resolvedStart, resolvedDuration);
+      updateData.originalDurationDays = resolvedDuration;
+    }
+  }
 
   // Build history entries
   const historyEntries: { field: string; oldValue: string | null; newValue: string | null; reason: string | null }[] = [];

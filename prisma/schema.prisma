@@ -92,6 +92,11 @@ model Task {
   name            String
   description     String?
   kind            String   @default("task")
+  // How the task got its dates: "estimated" (system-guessed defaults at
+  // creation — rendered as a ghost bar until the user commits real dates),
+  // "confirmed" (user chose the dates), or "unscheduled" (deliberately
+  // parked in the backlog with no dates). Milestones are never "unscheduled".
+  scheduleStatus  String   @default("confirmed")
   startDate       DateTime?
   durationDays    Int      @default(1)
   originalEndDate DateTime?
