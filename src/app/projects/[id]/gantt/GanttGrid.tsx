@@ -10,16 +10,21 @@ import {
   HEADER_HEIGHT,
   ROW_HEIGHT,
   SUB_ROW_HEIGHT,
+  TICK_INTERVAL_DAYS,
+  BAR_HEIGHT_TASK,
+  BAR_HEIGHT_SUBTASK,
+  BAR_HEIGHT_CATEGORY,
+  MIN_LABEL_BAR_WIDTH,
   isStatus,
   isPriority,
   STATUSES,
   PRIORITIES,
-  STATUS_BAR_OPACITY,
   EXCEPTION_STATUSES,
   userInitials,
   userFullName,
 } from "./constants";
-import { StatusDot, PriorityIcon, Avatar } from "./shared";
+import { PriorityIcon, Avatar } from "./shared";
+import { resolveEpicColor, type EpicColor } from "@/lib/epicPalette";
 import {
   addDays,
   daysBetween,
@@ -36,10 +41,15 @@ import type { TaskRow, MemberOption } from "./types";
 
 type LiveOverride = { rowId: string; start: Date; duration: number } | null;
 
-// The distinct milestone accent (gold) so diamonds pop when scanning the
-// chart; completed milestones go green like other completed elements.
-const MILESTONE_COLOR = "#D99A20";
-const MILESTONE_DONE_COLOR = "#38825B";
+// Dependency curves stay a single neutral slate rather than per-epic hues:
+// multi-colored curves crossing multi-colored bars re-adds the noise the
+// redesign removes, and a cross-epic dependency has no single "owner" hue.
+const DEP_LINE_COLOR = "#667085";
+// Today column accent (soft mint band + header pill).
+const TODAY_BAND_COLOR = "rgba(16,185,129,0.08)";
+const TODAY_EDGE_COLOR = "rgba(16,185,129,0.5)";
+const TODAY_PILL_BG = "rgba(16,185,129,0.14)";
+const TODAY_TEXT_COLOR = "#0B7A55";
 
 export default function GanttGrid({
   rows,
@@ -51,6 +61,7 @@ export default function GanttGrid({
   onSelect,
   rollupsByCategory,
   allTasksById,
+  epicColorByTaskId,
   onCreateMilestone,
   onScheduleFromBacklog,
 }: {
@@ -70,6 +81,7 @@ export default function GanttGrid({
   onSelect: (id: string) => void;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
   allTasksById: Record<string, TaskRow>;
+  epicColorByTaskId: Record<string, EpicColor>;
   onCreateMilestone?: (parentId: string, name: string, date: Date) => void;
   onScheduleFromBacklog?: (taskId: string, date: Date) => void;
 }) {
@@ -275,43 +287,60 @@ export default function GanttGrid({
           zIndex: 20,
         }}
       >
-        {dayLabels.map((d, i) => (
-          <Box
-            key={i}
-            sx={{
-              width: DAY_WIDTH,
-              flexShrink: 0,
-              position: "relative",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRight: "1px solid",
-              borderColor: d.isToday ? "#2D6EEF" : "divider",
-              bgcolor: d.isToday ? "rgba(45,110,239,0.04)" : d.isWeekendDay ? "rgba(0,0,0,0.02)" : "background.paper",
-            }}
-          >
-            {d.isFirstOfMonth && (
-              <Typography
-                sx={{
-                  position: "absolute",
-                  top: 4,
-                  fontSize: 10,
-                  fontWeight: 500,
-                  color: "text.disabled",
-                }}
-              >
-                {d.date.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" })}
-              </Typography>
-            )}
-            <Typography sx={{ fontSize: 11, color: "text.secondary", lineHeight: 1, mt: 2.5 }}>
-              {d.date.getUTCDate()}
-            </Typography>
-            <Typography sx={{ fontSize: 9, color: "text.disabled", lineHeight: 1, mt: 0.5 }}>
-              {d.date.toLocaleDateString("en-US", { weekday: "narrow", timeZone: "UTC" })}
-            </Typography>
-          </Box>
-        ))}
+        {dayLabels.map((d, i) => {
+          // Sparse ticks: only every TICK_INTERVAL_DAYS-th cell gets a label
+          // (first-of-month always does). Labels left-anchor at the tick line
+          // and overflow their 36px cell; the last few cells suppress theirs
+          // so nothing clips at the chart's right edge.
+          const isTick = i % TICK_INTERVAL_DAYS === 0;
+          const nearRightEdge = i > totalDays - TICK_INTERVAL_DAYS;
+          const showLabel = !d.isToday && (d.isFirstOfMonth || (isTick && !nearRightEdge));
+          return (
+            <Box
+              key={i}
+              sx={{
+                width: DAY_WIDTH,
+                flexShrink: 0,
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              {d.isToday && (
+                <Box
+                  sx={{
+                    mx: "auto",
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: 999,
+                    bgcolor: TODAY_PILL_BG,
+                  }}
+                >
+                  <Typography sx={{ fontSize: 11, fontWeight: 700, color: TODAY_TEXT_COLOR, lineHeight: 1.2 }}>
+                    {d.date.getUTCDate()}
+                  </Typography>
+                </Box>
+              )}
+              {showLabel && (
+                <Typography
+                  sx={{
+                    position: "absolute",
+                    left: 4,
+                    whiteSpace: "nowrap",
+                    fontSize: 11,
+                    fontWeight: d.isFirstOfMonth ? 600 : 400,
+                    color: d.isFirstOfMonth ? "text.primary" : "text.secondary",
+                    zIndex: 1,
+                  }}
+                >
+                  {d.isFirstOfMonth
+                    ? `${d.date.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" })} ${d.date.getUTCDate()}`
+                    : d.date.getUTCDate()}
+                </Typography>
+              )}
+            </Box>
+          );
+        })}
       </Box>
 
       {/* Body — also the drop target for scheduling backlog tasks: dropping
@@ -332,26 +361,7 @@ export default function GanttGrid({
           onScheduleFromBacklog(taskId, dateAtClientX(e.clientX, rect.left));
         }}
       >
-        {/* Zebra rows */}
-        <Box sx={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-          {displayRows.map((row, i) =>
-            i % 2 === 1 ? (
-              <Box
-                key={row.id}
-                sx={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: rowTops[i],
-                  height: rowHeights[i],
-                  bgcolor: "rgba(0,0,0,0.015)",
-                }}
-              />
-            ) : null
-          )}
-        </Box>
-
-        {/* Weekend columns */}
+        {/* Weekend columns — kept barely-there so the grid stays airy */}
         <Box sx={{ position: "absolute", inset: 0, display: "flex", pointerEvents: "none" }}>
           {dayLabels.map((d, i) => (
             <Box
@@ -359,40 +369,48 @@ export default function GanttGrid({
               sx={{
                 width: DAY_WIDTH,
                 height: totalHeight,
-                bgcolor: d.isWeekendDay ? "rgba(0,0,0,0.025)" : "transparent",
+                bgcolor: d.isWeekendDay ? "rgba(0,0,0,0.015)" : "transparent",
                 flexShrink: 0,
               }}
             />
           ))}
         </Box>
 
-        {/* Today marker */}
+        {/* Vertical gridlines at tick intervals only (per-day lines removed) */}
+        <Box sx={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {dayLabels.map((_, i) =>
+            i > 0 && i % TICK_INTERVAL_DAYS === 0 ? (
+              <Box
+                key={i}
+                sx={{
+                  position: "absolute",
+                  top: 0,
+                  left: i * DAY_WIDTH,
+                  width: "1px",
+                  height: totalHeight,
+                  bgcolor: "rgba(0,0,0,0.045)",
+                }}
+              />
+            ) : null
+          )}
+        </Box>
+
+        {/* Today — soft mint band across the column plus a hairline left
+            edge so "now" still has a precise position marker. */}
         {todayOffset >= 0 && todayOffset < totalDays && (
           <Box
             sx={{
               position: "absolute",
               top: 0,
               left: todayOffset * DAY_WIDTH,
-              width: 2,
+              width: DAY_WIDTH,
               height: totalHeight,
-              bgcolor: "#2D6EEF",
-              zIndex: 10,
+              bgcolor: TODAY_BAND_COLOR,
+              borderLeft: `1px solid ${TODAY_EDGE_COLOR}`,
+              zIndex: 1,
               pointerEvents: "none",
             }}
-          >
-            <Box
-              sx={{
-                position: "absolute",
-                top: -6,
-                left: -6,
-                width: 14,
-                height: 14,
-                borderRadius: "50%",
-                bgcolor: "#2D6EEF",
-                border: "2px solid #fff",
-              }}
-            />
-          </Box>
+          />
         )}
 
         {/* Dependency curves — two-tier styling with arrowheads */}
@@ -411,14 +429,14 @@ export default function GanttGrid({
               markerHeight="7"
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#2D6EEF" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={DEP_LINE_COLOR} />
             </marker>
           </defs>
           {displayRows.flatMap((row) =>
             (row.deps || []).map((dep) => {
               const depIdx = rowIndexById[dep.predecessorId];
               const toIdx = rowIndexById[row.id];
-              const color = "#2D6EEF";
+              const color = DEP_LINE_COLOR;
               // Both endpoints visible → draw the curve
               if (depIdx !== undefined && toIdx !== undefined) {
                 const depRow = displayRows[depIdx];
@@ -447,7 +465,7 @@ export default function GanttGrid({
                     strokeWidth={1.75}
                     fill="none"
                     markerEnd="url(#dep-arrow)"
-                    opacity={dimmed ? 0.15 : 1}
+                    opacity={hoveredId === null ? 0.55 : dimmed ? 0.15 : 1}
                   />
                 );
               }
@@ -472,7 +490,7 @@ export default function GanttGrid({
               return (
                 <g
                   key={`${dep.predecessorId}-${row.id}-hidden`}
-                  opacity={dimmed ? 0.15 : 1}
+                  opacity={hoveredId === null ? 0.55 : dimmed ? 0.15 : 1}
                 >
                   <line
                     x1={indicatorX}
@@ -558,10 +576,21 @@ export default function GanttGrid({
           const isSelected = selectedId === row.id;
           const status = isStatus(row.status) ? STATUSES[row.status] : STATUSES.todo;
           const priority = isPriority(row.priority) ? PRIORITIES[row.priority] : PRIORITIES.medium;
-          const barHeight = isCategory ? 28 : row.isSubtask ? 8 : 10;
-          const barOpacity = isStatus(row.status) ? STATUS_BAR_OPACITY[row.status] : STATUS_BAR_OPACITY.todo;
-          const barGradient = `linear-gradient(135deg, rgba(45,110,239,${barOpacity}) 0%, rgba(15,169,192,${barOpacity}) 100%)`;
+          const barHeight = isCategory ? BAR_HEIGHT_CATEGORY : row.isSubtask ? BAR_HEIGHT_SUBTASK : BAR_HEIGHT_TASK;
+          const epic = resolveEpicColor(row, epicColorByTaskId);
           const isExceptionStatus = isStatus(row.status) && EXCEPTION_STATUSES.includes(row.status);
+          const isArchived = row.status === "archived";
+          // Solid-segment width: linear progress percent; completed bars are
+          // always fully solid. Delayed/blocked show their real progress —
+          // the exception flag comes from the label + end dot, not the fill.
+          const solidPct = row.status === "completed"
+            ? 100
+            : Math.min(100, Math.max(0, row.progress));
+          const labelColor = isExceptionStatus
+            ? status.textColor
+            : solidPct >= 25 && !isEstimated
+              ? "#fff"
+              : epic.dark;
 
           // Task-only computed values (not used for categories)
           const taskStart = !isCategory && row.startDate ? new Date(row.startDate) : null;
@@ -598,17 +627,13 @@ export default function GanttGrid({
           const msCenterX = taskStart
             ? daysBetween(rangeStart, taskStart) * DAY_WIDTH + DAY_WIDTH / 2
             : 0;
-          const msColor = row.color ?? (row.status === "completed" ? MILESTONE_DONE_COLOR : MILESTONE_COLOR);
+          // Diamonds inherit the epic hue (shape + always-on label keep them
+          // scannable); an explicit row.color still wins, completed stays green.
+          const msColor = row.color ?? (row.status === "completed" ? STATUSES.completed.textColor : epic.main);
           // Label sits right of the diamond by default; flip to the left when
           // the diamond is close enough to the chart's right edge to clip it.
           const msLabelOnLeft = msCenterX > chartWidth - 160;
 
-          const workedSoFar = !isCategory && taskStart && row.durationDays > 0
-            ? today <= taskStart ? 0 : Math.min(workDaysBetween(taskStart, addDays(today, -1)), row.durationDays)
-            : 0;
-          const filledWidthPx = workedSoFar > 0 && taskStart
-            ? (daysBetween(taskStart, workEndDate(taskStart, workedSoFar)) + 1) * DAY_WIDTH
-            : 0;
           const originalEndOffsetPx = extended && taskStart
             ? daysBetween(taskStart, new Date(row.originalEndDate!)) * DAY_WIDTH
             : null;
@@ -637,9 +662,10 @@ export default function GanttGrid({
                 right: 0,
                 top: rowTops[i],
                 height: rowHeights[i],
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                bgcolor: isCategory ? "rgba(91,99,214,0.04)" : "transparent",
+                // Per-row hairlines removed for an airier grid: only epic
+                // groups get a separator (top of each category row).
+                borderTop: isCategory && i > 0 ? "1px solid rgba(0,0,0,0.08)" : "none",
+                bgcolor: isCategory ? `${epic.main}08` : "transparent",
               }}
             >
               {/* Left-of-bar avatar + priority (not for categories) */}
@@ -684,15 +710,14 @@ export default function GanttGrid({
                     left: barLeft,
                     width: barWidth,
                     height: barHeight,
-                    borderRadius: 1,
+                    borderRadius: 999,
                     cursor: "pointer",
-                    bgcolor: "rgba(91,99,214,0.18)",
-                    border: "1.5px solid #5B63D6",
+                    bgcolor: epic.tint,
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
                     zIndex: 20,
-                    boxShadow: isSelected ? "0 0 0 2px rgba(79,93,255,0.4)" : "none",
+                    boxShadow: isSelected ? `0 0 0 2px ${epic.main}59` : "none",
                   }}
                   title={
                     hasRollup
@@ -708,8 +733,8 @@ export default function GanttGrid({
                       left: 0,
                       bottom: 0,
                       width: `${rollup?.progress ?? 0}%`,
-                      bgcolor: "#5B63D6",
-                      opacity: 0.5,
+                      bgcolor: epic.main,
+                      opacity: 0.85,
                       pointerEvents: "none",
                       transition: "width 0.3s ease",
                     }}
@@ -749,23 +774,19 @@ export default function GanttGrid({
                     left: barLeft,
                     width: barWidth,
                     height: barHeight,
-                    borderRadius: 0.5,
+                    borderRadius: 999,
                     cursor: "grab",
-                    // Ghost (estimated) bars: muted fixed-opacity fill + dashed
-                    // border, so "system-guessed dates" never read as a
-                    // committed plan. Confirmed bars keep the status-opacity
-                    // gradient system.
-                    background: isEstimated
-                      ? "linear-gradient(135deg, rgba(45,110,239,0.28) 0%, rgba(15,169,192,0.28) 100%)"
-                      : barGradient,
-                    // A constant-opacity border (independent of the status-driven
-                    // fill opacity above) so low-opacity bars (todo, archived)
-                    // still have a visible edge for locating start/end and the
-                    // drag-resize affordance — the fill alone can be nearly
-                    // invisible at 0.15-0.25 opacity (per code review).
-                    border: isEstimated ? "1.5px dashed #496FE0" : "1px solid rgba(45,110,239,0.3)",
+                    // Ghost (estimated) bars: translucent tint + dashed border
+                    // in the epic's hue, so "system-guessed dates" never read
+                    // as a committed plan (the dashed edge — not color alone —
+                    // carries the signal). Confirmed bars: full tint with a
+                    // solid progress segment layered inside.
+                    background: isEstimated ? `${epic.tint}A6` : epic.tint,
+                    border: isEstimated ? `1.5px dashed ${epic.dark}` : "none",
                     outline: overBudget ? "2px solid #DC2F4E" : "none",
                     outlineOffset: overBudget ? "1px" : "0",
+                    // Archived bars stay visible but clearly de-emphasized.
+                    opacity: isArchived ? 0.45 : 1,
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
@@ -773,17 +794,75 @@ export default function GanttGrid({
                     // Background/border are in the transition so the ghost →
                     // solid flip on confirmation reads as a short fade.
                     transition: "box-shadow 0.15s, background 0.15s ease, border 0.15s ease",
-                    boxShadow: isSelected ? "0 0 0 2px rgba(79,93,255,0.4)" : "none",
+                    boxShadow: isSelected ? `0 0 0 2px ${epic.main}59` : "none",
                     "&:active": { cursor: "grabbing" },
                     "&:hover .resize-handle": { opacity: 1 },
                   }}
                   title={`${row.name} — ${status.label}${isEstimated ? " — dates estimated, drag to schedule" : ""}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
                 >
-                  {isExceptionStatus && (
-                    <Box sx={{ position: "absolute", left: 2, top: "50%", transform: "translateY(-50%)", zIndex: 25 }}>
-                      <StatusDot status={row.status} size={row.isSubtask ? 6 : 8} />
-                    </Box>
-                  )}
+                {/* Solid progress segment — completed portion of the bar in
+                    the epic's saturated hue over the light tint base.
+                    Suppressed for ghost bars: guessed dates have no
+                    meaningful progress to show. */}
+                {solidPct > 0 && !isEstimated && (
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      bottom: 0,
+                      width: `${solidPct}%`,
+                      bgcolor: epic.main,
+                      zIndex: 0,
+                      pointerEvents: "none",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                )}
+
+                {/* On-bar status label (tasks only, wide bars only) */}
+                {!row.isSubtask && barWidth >= MIN_LABEL_BAR_WIDTH && (
+                  <Typography
+                    noWrap
+                    sx={{
+                      position: "absolute",
+                      left: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      maxWidth: barWidth - 28,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: labelColor,
+                      pointerEvents: "none",
+                      zIndex: 5,
+                    }}
+                  >
+                    {status.label}
+                  </Typography>
+                )}
+
+                {/* Status end dot — the reference's bar-end marker doubles as
+                    the status signal (delayed/blocked keep their distinctive
+                    amber/pink, replacing the old left-edge StatusDot). */}
+                {barWidth >= 40 && !isEstimated && (
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      right: 5,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      width: row.isSubtask ? 5 : 7,
+                      height: row.isSubtask ? 5 : 7,
+                      borderRadius: "50%",
+                      bgcolor: status.fill,
+                      border: "1.5px solid #fff",
+                      zIndex: 5,
+                      pointerEvents: "none",
+                    }}
+                    title={`Status: ${status.label}`}
+                  />
+                )}
+
                 {/* Estimated indicator — "≈" badge at the bar's left edge */}
                 {isEstimated && (
                   <Box
@@ -795,12 +874,12 @@ export default function GanttGrid({
                       height: 15,
                       borderRadius: "50%",
                       bgcolor: "#fff",
-                      border: "1px dashed #496FE0",
+                      border: `1px dashed ${epic.dark}`,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       zIndex: 30,
-                      color: "#496FE0",
+                      color: epic.dark,
                       fontSize: 10,
                       fontWeight: 700,
                       lineHeight: 1,
@@ -812,25 +891,6 @@ export default function GanttGrid({
                   </Box>
                 )}
 
-                {/* Worked-so-far fill — a distinct signal (hours logged vs. planned)
-                    from the status-opacity gradient above, so it stays flat brand
-                    blue rather than picking up the status color. Suppressed for
-                    ghost bars: guessed dates have no meaningful elapsed work. */}
-                {filledWidthPx > 0 && !isEstimated && (
-                  <Box
-                    sx={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      bottom: 0,
-                      width: filledWidthPx,
-                      bgcolor: "#2D6EEF",
-                      zIndex: 0,
-                      pointerEvents: "none",
-                    }}
-                  />
-                )}
-
                 {/* Extended striped overlay */}
                 {extended && originalEndOffsetPx !== null && originalEndOffsetPx < barWidth && (
                   <Box
@@ -840,8 +900,9 @@ export default function GanttGrid({
                       bottom: 0,
                       left: Math.max(originalEndOffsetPx, 0),
                       width: barWidth - Math.max(originalEndOffsetPx, 0),
+                      // Dark stripes — white ones vanish over the light tint fill.
                       backgroundImage:
-                        "repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0px, rgba(255,255,255,0.35) 3px, transparent 3px, transparent 7px)",
+                        "repeating-linear-gradient(45deg, rgba(0,0,0,0.10) 0px, rgba(0,0,0,0.10) 3px, transparent 3px, transparent 7px)",
                       borderLeft: "2px dashed #E8A33D",
                       zIndex: 10,
                       pointerEvents: "none",
@@ -969,8 +1030,8 @@ export default function GanttGrid({
                     width: 8,
                     cursor: "ew-resize",
                     opacity: 0,
-                    bgcolor: "rgba(0,0,0,0.1)",
-                    borderRadius: "0 4px 4px 0",
+                    bgcolor: `${epic.dark}26`,
+                    borderRadius: "0 999px 999px 0",
                     zIndex: 10,
                     transition: "opacity 0.15s",
                   }}
@@ -1085,7 +1146,8 @@ export default function GanttGrid({
                 height: 12,
                 transform: "rotate(45deg)",
                 borderRadius: "1.5px",
-                bgcolor: MILESTONE_COLOR,
+                // Draft diamond previews in the target epic's hue.
+                bgcolor: resolveEpicColor({ id: milestoneDraft.parentId }, epicColorByTaskId).main,
                 flexShrink: 0,
               }}
             />

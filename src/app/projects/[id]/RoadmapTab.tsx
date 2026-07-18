@@ -57,6 +57,7 @@ import {
   getToday,
 } from "@/lib/dateUtils";
 import { resolveDefaultSchedule } from "@/lib/scheduling";
+import { assignEpicColors, resolveEpicColor } from "@/lib/epicPalette";
 
 type ApiTask = {
   id: string;
@@ -408,6 +409,7 @@ export default function RoadmapTab({
         assigneeId?: string | null;
         kind?: TaskKind;
         scheduleStatus?: ScheduleStatus;
+        color?: string | null;
       },
       confirmedDelay = false,
       reason?: string
@@ -1183,6 +1185,11 @@ export default function RoadmapTab({
     return m;
   }, [tasks]);
 
+  // Epic color triads for every task id — computed from the FULL task list
+  // (not the visible rows) so collapsed rows, backlog items, and hidden
+  // dependency endpoints all resolve to their epic's hue.
+  const epicColorByTaskId = useMemo(() => assignEpicColors(tasks), [tasks]);
+
   // List view helpers
   function handleOpenMenu(e: React.MouseEvent<HTMLElement>, task: TaskRow) {
     e.stopPropagation();
@@ -1244,6 +1251,7 @@ export default function RoadmapTab({
           ? 0
           : task.durationDays;
     const displayProgress = rollup ? rollup.progress : task.progress;
+    const epic = resolveEpicColor(task, epicColorByTaskId);
 
     return (
       <Box key={task.id}>
@@ -1259,14 +1267,12 @@ export default function RoadmapTab({
             "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
             "&:hover .row-add": { opacity: 1 },
             cursor: "pointer",
-            bgcolor: task.kind === "category" ? "rgba(0,0,0,0.03)" : "transparent",
-            // Category: indigo stripe (unchanged). Task: new thin brand-blue
-            // stripe. Subtask: no stripe — the deepest, quietest level.
+            bgcolor: task.kind === "category" ? `${epic.main}08` : "transparent",
+            // Only categories keep a stripe — in their epic's hue. The chip
+            // and bar colors now carry grouping for tasks/subtasks.
             borderLeft: task.kind === "category"
-              ? "3px solid #5B63D6"
-              : task.isSubtask
-                ? "3px solid transparent"
-                : "3px solid #2D6EEF",
+              ? `3px solid ${epic.main}`
+              : "3px solid transparent",
           }}
           onClick={() => setSelectedId(task.id)}
         >
@@ -1280,25 +1286,44 @@ export default function RoadmapTab({
           <StatusDot status={task.status} size={8} />
           {task.kind === "milestone" && (
             <Box
-              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: task.color ?? "#D99A20", flexShrink: 0 }}
+              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: task.color ?? epic.main, flexShrink: 0 }}
               title="Milestone"
             />
           )}
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Tooltip title={task.name} enterDelay={500}>
-              <Typography
-                variant="body2"
-                fontWeight={task.kind === "category" ? 700 : 600}
-                noWrap
-                sx={{
-                  textDecoration: task.status === "completed" ? "line-through" : "none",
-                  color: task.status === "completed" ? "text.secondary" : "text.primary",
-                  textTransform: task.kind === "category" ? "uppercase" : "none",
-                  letterSpacing: task.kind === "category" ? 0.3 : 0,
-                }}
-              >
-                {task.name}
-              </Typography>
+              {task.kind === "category" ? (
+                // Epic name renders as a colored chip in the epic's hue,
+                // mirroring the Gantt sidebar.
+                <Typography
+                  variant="body2"
+                  fontWeight={700}
+                  noWrap
+                  sx={{
+                    display: "inline-block",
+                    maxWidth: "100%",
+                    px: 1,
+                    py: 0.25,
+                    borderRadius: 999,
+                    bgcolor: epic.tint,
+                    color: epic.dark,
+                  }}
+                >
+                  {task.name}
+                </Typography>
+              ) : (
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  noWrap
+                  sx={{
+                    textDecoration: task.status === "completed" ? "line-through" : "none",
+                    color: task.status === "completed" ? "text.secondary" : "text.primary",
+                  }}
+                >
+                  {task.name}
+                </Typography>
+              )}
             </Tooltip>
           </Box>
           {showPlus && (
@@ -1446,6 +1471,7 @@ export default function RoadmapTab({
                 onAddChild={createChild}
                 onAddEpic={createEpic}
                 rollupsByCategory={rollupsByCategory}
+                epicColorByTaskId={epicColorByTaskId}
                 onReorder={handleReorder}
                 onReparent={handleReparent}
                 bodyRef={sidebarScrollRef}
@@ -1485,6 +1511,7 @@ export default function RoadmapTab({
                   onSelect={setSelectedId}
                   rollupsByCategory={rollupsByCategory}
                   allTasksById={allTasksById}
+                  epicColorByTaskId={epicColorByTaskId}
                   onCreateMilestone={handleCreateMilestone}
                   onScheduleFromBacklog={handleScheduleFromBacklog}
                 />
@@ -1571,6 +1598,8 @@ export default function RoadmapTab({
           rows={rows}
           projectId={projectId}
           subtasks={selectedRow.isSubtask ? [] : childrenOf(selectedRow.id).map((t) => ({ ...t, isSubtask: t.kind === "task" && selectedRow.kind === "task" }))}
+          epicColor={resolveEpicColor(selectedRow, epicColorByTaskId)}
+          onUpdateColor={(id, color) => patchTask(id, { color })}
           onClose={() => setSelectedId(null)}
           onSave={handleSaveTask}
           onDelete={performDelete}

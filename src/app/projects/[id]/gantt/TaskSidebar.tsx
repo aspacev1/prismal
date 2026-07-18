@@ -39,6 +39,7 @@ import {
 } from "./constants";
 import { StatusDot, PriorityIcon, Avatar } from "./shared";
 import { isOverEstimate, isExtended, isAhead, isShifted, workEndDate, HOURS_PER_DAY } from "@/lib/dateUtils";
+import { resolveEpicColor, type EpicColor } from "@/lib/epicPalette";
 import type { TaskRow, MemberOption } from "./types";
 
 export default function TaskSidebar({
@@ -53,6 +54,7 @@ export default function TaskSidebar({
   onAddChild,
   onAddEpic,
   rollupsByCategory,
+  epicColorByTaskId,
   onReorder,
   onReparent,
   bodyRef,
@@ -74,6 +76,7 @@ export default function TaskSidebar({
   onAddChild: (parentId: string, name: string, kind?: "task" | "milestone") => Promise<{ ok: boolean }>;
   onAddEpic: (name: string) => Promise<{ ok: boolean }>;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
+  epicColorByTaskId: Record<string, EpicColor>;
   onReorder: (items: { id: string; order: number }[]) => void;
   onReparent: (taskId: string, newParentId: string | null, siblingOrder: { id: string; order: number }[]) => void;
   bodyRef?: React.Ref<HTMLDivElement>;
@@ -332,7 +335,7 @@ export default function TaskSidebar({
           onDragEnd={handleDragEnd}
         >
           <SortableContext items={topLevelIds} strategy={verticalListSortingStrategy}>
-            {topLevelRows.map((row) => {
+            {topLevelRows.map((row, rowIdx) => {
               const children = childRowsByParent[row.id] ?? [];
               const childIds = children.map((c) => c.id);
               const isExpanded = expanded.has(row.id);
@@ -349,6 +352,8 @@ export default function TaskSidebar({
                   onToggleExpand={onToggleExpand}
                   childCounts={childCounts}
                   rollupsByCategory={rollupsByCategory}
+                  epicColorByTaskId={epicColorByTaskId}
+                  isFirstRow={rowIdx === 0}
                   onAddChildClick={handleAddChildClick}
                   isDragging={activeId === row.id}
                   memberFor={memberFor}
@@ -388,6 +393,7 @@ export default function TaskSidebar({
                             onToggleExpand={onToggleExpand}
                             childCounts={childCounts}
                             rollupsByCategory={rollupsByCategory}
+                            epicColorByTaskId={epicColorByTaskId}
                             onAddChildClick={handleAddChildClick}
                             isDragging={activeId === child.id}
                             memberFor={memberFor}
@@ -416,6 +422,7 @@ export default function TaskSidebar({
                                     onToggleExpand={onToggleExpand}
                                     childCounts={childCounts}
                                     rollupsByCategory={rollupsByCategory}
+                                    epicColorByTaskId={epicColorByTaskId}
                                     onAddChildClick={handleAddChildClick}
                                     isDragging={activeId === grandChild.id}
                                     memberFor={memberFor}
@@ -565,6 +572,8 @@ function SortableRow({
   onToggleExpand,
   childCounts,
   rollupsByCategory,
+  epicColorByTaskId,
+  isFirstRow = false,
   onAddChildClick,
   isDragging,
   memberFor,
@@ -589,6 +598,8 @@ function SortableRow({
   onToggleExpand: (id: string) => void;
   childCounts: Record<string, number>;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
+  epicColorByTaskId: Record<string, EpicColor>;
+  isFirstRow?: boolean;
   onAddChildClick: (parentId: string) => void;
   isDragging: boolean;
   memberFor: (task: TaskRow) => MemberOption | null;
@@ -619,6 +630,10 @@ function SortableRow({
   const childCount = !row.isSubtask ? childCounts[row.id] ?? 0 : 0;
   const isCategory = row.kind === "category";
   const canAddChild = !row.isSubtask;
+  const epic = resolveEpicColor(row, epicColorByTaskId);
+  // Per-row hairlines removed to mirror the grid: only epic groups get a
+  // separator (top of each category row, except the very first).
+  const groupSeparator = isCategory && !isFirstRow ? "1px solid rgba(0,0,0,0.08)" : "none";
 
   // Plan state indicators
   const taskStart = !isCategory && row.startDate ? new Date(row.startDate) : null;
@@ -643,19 +658,14 @@ function SortableRow({
             alignItems: "center",
             justifyContent: "center",
             height: row.isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT,
-            borderBottom: "1px solid",
-            borderColor: "divider",
+            borderTop: groupSeparator,
             cursor: "pointer",
             transition: "background-color 0.15s",
-            borderLeft: isCategory
-              ? "3px solid #5B63D6"
-              : row.isSubtask
-                ? "3px solid transparent"
-                : "3px solid #2D6EEF",
+            borderLeft: isCategory ? `3px solid ${epic.main}` : "3px solid transparent",
             bgcolor: isSelected
               ? "rgba(79,93,255,0.12)"
               : isCategory
-                ? "rgba(91,99,214,0.12)"
+                ? `${epic.main}14`
                 : "background.paper",
             "&:hover": {
               bgcolor: isSelected ? "rgba(79,93,255,0.18)" : "rgba(0,0,0,0.04)",
@@ -681,22 +691,17 @@ function SortableRow({
           px: 1.5,
           pl: row.isSubtask ? 4.5 : 1.5,
           height: row.isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT,
-          borderBottom: "1px solid",
-          borderColor: "divider",
+          borderTop: groupSeparator,
           cursor: "pointer",
           transition: "background-color 0.15s",
           bgcolor: isSelected
             ? "rgba(79,93,255,0.08)"
             : isCategory
-              ? "rgba(91,99,214,0.06)"
+              ? `${epic.main}0A`
               : "background.paper",
-          // Category: indigo stripe (unchanged). Task: new thin brand-blue
-          // stripe. Subtask: no stripe — the deepest, quietest level.
-          borderLeft: isCategory
-            ? "3px solid #5B63D6"
-            : row.isSubtask
-              ? "3px solid transparent"
-              : "3px solid #2D6EEF",
+          // Only categories keep a stripe — in their epic's hue. The chip
+          // and bar colors now carry grouping for tasks/subtasks.
+          borderLeft: isCategory ? `3px solid ${epic.main}` : "3px solid transparent",
           "&:hover": {
             bgcolor: isSelected ? "rgba(79,93,255,0.12)" : "rgba(0,0,0,0.04)",
           },
@@ -768,7 +773,7 @@ function SortableRow({
         <StatusDot status={row.status} size={8} />
         {row.kind === "milestone" && (
           <Box
-            sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: row.color ?? "#D99A20", flexShrink: 0 }}
+            sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: row.color ?? epic.main, flexShrink: 0 }}
             title="Milestone"
           />
         )}
@@ -783,23 +788,47 @@ function SortableRow({
           />
         )}
 
-        <Typography
-          title={row.name}
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            fontSize: row.isSubtask ? 12 : isCategory ? 12.5 : 13,
-            color: row.isSubtask ? "text.secondary" : "text.primary",
-            fontWeight: isCategory ? 700 : row.isSubtask ? 400 : 500,
-            textTransform: isCategory ? "uppercase" : "none",
-            letterSpacing: isCategory ? 0.3 : 0,
-          }}
-        >
-          {row.name}
-        </Typography>
+        {isCategory ? (
+          // Epic name renders as a colored chip in the epic's hue — the
+          // primary "which epic is this" signal, mirrored in the List view.
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography
+              title={row.name}
+              sx={{
+                display: "inline-block",
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                px: 1,
+                py: 0.25,
+                borderRadius: 999,
+                bgcolor: epic.tint,
+                color: epic.dark,
+                fontSize: 11.5,
+                fontWeight: 700,
+              }}
+            >
+              {row.name}
+            </Typography>
+          </Box>
+        ) : (
+          <Typography
+            title={row.name}
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: row.isSubtask ? 12 : 13,
+              color: row.isSubtask ? "text.secondary" : "text.primary",
+              fontWeight: row.isSubtask ? 400 : 500,
+            }}
+          >
+            {row.name}
+          </Typography>
+        )}
 
         {/* Plan state indicator */}
         {!isCategory && planAhead && (
@@ -845,7 +874,7 @@ function SortableRow({
                 sx={{
                   width: `${rollupsByCategory[row.id]?.progress ?? 0}%`,
                   height: "100%",
-                  bgcolor: "#5B63D6",
+                  bgcolor: epic.main,
                   borderRadius: 2,
                   transition: "width 0.3s ease",
                 }}
@@ -910,7 +939,7 @@ function SortableRow({
           <Box sx={{ width: 16, flexShrink: 0 }} />
           {inlineAddKind === "milestone" && (
             <Box
-              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: "#D99A20", flexShrink: 0 }}
+              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: epic.main, flexShrink: 0 }}
               title="Milestone"
             />
           )}

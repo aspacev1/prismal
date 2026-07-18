@@ -33,6 +33,7 @@ import {
 import { StatusDot, PriorityIcon, Avatar } from "./shared";
 import PulseTab from "./PulseTab";
 import { isoDate, workEndDate, fmtDate, isExtended, isAhead, isShifted, extensionDays, daysBetween } from "@/lib/dateUtils";
+import { EPIC_PALETTE, type EpicColor } from "@/lib/epicPalette";
 import type { TaskRow, MemberOption, TaskDraft } from "./types";
 
 const SECTION_LABEL_SX = {
@@ -51,6 +52,8 @@ export default function TaskDetailPanel({
   rows,
   projectId,
   subtasks,
+  epicColor,
+  onUpdateColor,
   onClose,
   onSave,
   onDelete,
@@ -65,6 +68,8 @@ export default function TaskDetailPanel({
   rows: TaskRow[];
   projectId: string;
   subtasks: TaskRow[];
+  epicColor: EpicColor;
+  onUpdateColor: (id: string, color: string | null) => void;
   onClose: () => void;
   onSave: (draft: TaskDraft) => void;
   onDelete: (id: string) => void;
@@ -551,6 +556,62 @@ export default function TaskDetailPanel({
                 </Box>
               )}
             </Box>
+
+            {/* Epic color (categories only) — swatch picker over the curated
+                palette. Immediate PATCH (outside the draft/save flow) so the
+                whole chart recolors on click; "Auto" clears the override and
+                returns to order-based palette cycling. */}
+            {isCategory && (
+              <Box>
+                <Typography sx={SECTION_LABEL_SX}>Color</Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                  <Box
+                    component="button"
+                    onClick={() => onUpdateColor(row.id, null)}
+                    sx={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      cursor: "pointer",
+                      p: 0,
+                      bgcolor: "background.paper",
+                      border: row.color === null ? "2px solid" : "1.5px dashed",
+                      borderColor: row.color === null ? "text.primary" : "text.disabled",
+                      color: "text.secondary",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                    }}
+                    title="Auto — cycle from the palette by epic order"
+                  >
+                    A
+                  </Box>
+                  {EPIC_PALETTE.map((c) => {
+                    const isActive = epicColor.main.toUpperCase() === c.main.toUpperCase();
+                    return (
+                      <Box
+                        key={c.main}
+                        component="button"
+                        onClick={() => onUpdateColor(row.id, c.main)}
+                        sx={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: "50%",
+                          cursor: "pointer",
+                          p: 0,
+                          bgcolor: c.main,
+                          border: "2px solid",
+                          borderColor: isActive ? "text.primary" : "transparent",
+                          outline: isActive ? "2px solid #fff" : "none",
+                          outlineOffset: "-4px",
+                        }}
+                        title={row.color === null && isActive ? "Current (auto)" : c.main}
+                      />
+                    );
+                  })}
+                </Box>
+              </Box>
+            )}
 
             {/* Dependencies */}
             <Box>
