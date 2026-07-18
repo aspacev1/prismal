@@ -85,6 +85,22 @@ type ApiTask = {
   successorDeps: { id: string }[];
 };
 
+// Shape of the task returned by POST /tasks: raw Prisma includes rather than
+// the mapped shape GET returns (`predecessorDeps` instead of `deps`).
+type CreatedApiTask = Omit<ApiTask, "deps" | "successorDeps"> & {
+  predecessorDeps: { predecessorId: string }[];
+  successorDeps: { id: string }[];
+};
+
+function toApiTask(t: CreatedApiTask): ApiTask {
+  const { predecessorDeps, successorDeps, ...rest } = t;
+  return {
+    ...rest,
+    deps: predecessorDeps.map((d) => ({ predecessorId: d.predecessorId })),
+    successorDeps: successorDeps.map((s) => ({ id: s.id })),
+  };
+}
+
 type PendingScheduleChange = ScheduleChangeData | null;
 
 export default function RoadmapTab({
@@ -156,8 +172,14 @@ export default function RoadmapTab({
     localStorage.setItem("roadmap.sidebarWidth", String(sidebarWidth));
   }, [sidebarWidth]);
 
+  // Only the very first load blocks the UI behind the "Loading tasks..."
+  // state. Refetches after mutations run in the background: tearing the whole
+  // Gantt down and remounting it on every create/save read as a full page
+  // reload (loading flash + scroll reset).
+  const hasLoadedRef = useRef(false);
   const fetchTasks = useCallback(async () => {
-    setLoading(true);
+    const isInitialLoad = !hasLoadedRef.current;
+    if (isInitialLoad) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/tasks`, { credentials: "same-origin" });
@@ -168,10 +190,11 @@ export default function RoadmapTab({
       }
       const body = await res.json();
       setTasks(body.tasks);
+      hasLoadedRef.current = true;
     } catch {
       setError("Network error.");
     } finally {
-      setLoading(false);
+      if (isInitialLoad) setLoading(false);
     }
   }, [projectId]);
 
@@ -291,13 +314,20 @@ export default function RoadmapTab({
       syncingScroll.current = false;
     });
   }, []);
+  // Guarded by a ref so it fires once per Gantt-view entry: `rangeStart` gets
+  // a new identity every time tasks change, and re-running this after each
+  // mutation would yank the user's horizontal scroll back to "today".
+  const didAutoScrollRef = useRef(false);
   useEffect(() => {
-    if (scrollRef.current && view === "gantt" && !loading) {
-      const todayOffsetPx = daysBetween(rangeStart, getToday()) * DAY_WIDTH;
-      scrollRef.current.scrollLeft = Math.max(todayOffsetPx - DAY_WIDTH, 0);
+    if (view !== "gantt") {
+      didAutoScrollRef.current = false;
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, rangeStart]);
+    if (loading || didAutoScrollRef.current || !scrollRef.current) return;
+    didAutoScrollRef.current = true;
+    const todayOffsetPx = daysBetween(rangeStart, getToday()) * DAY_WIDTH;
+    scrollRef.current.scrollLeft = Math.max(todayOffsetPx - DAY_WIDTH, 0);
+  }, [view, loading, rangeStart]);
 
   function toggleExpand(taskId: string) {
     setExpanded((prev) => {
@@ -700,10 +730,12 @@ export default function RoadmapTab({
     });
     if (res.ok) {
       const data = await res.json();
+      // Insert the created task directly — the POST response is the server
+      // row, so no refetch is needed and the row appears without a reload.
+      setTasks((prev) => [...prev, toApiTask(data.task)]);
       setSelectedId(data.task.id);
-      fetchTasks();
     }
-  }, [projectId, members, fetchTasks]);
+  }, [projectId, members]);
 
   // Create a child (Task under a Category, or Subtask under a Task).
   // Used by the hover-"+" inline add. The parent's kind determines the
@@ -728,17 +760,18 @@ export default function RoadmapTab({
         body: JSON.stringify(body),
       });
       if (res.ok) {
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
         setExpanded((prev) => {
           const next = new Set(prev);
           next.add(parentId);
           return next;
         });
-        fetchTasks();
         return { ok: true };
       }
       return { ok: false };
     },
-    [projectId, members, fetchTasks]
+    [projectId, members]
   );
 
   const createEpic = useCallback(
@@ -754,12 +787,13 @@ export default function RoadmapTab({
         }),
       });
       if (res.ok) {
-        fetchTasks();
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
         return { ok: true };
       }
       return { ok: false };
     },
-    [projectId, fetchTasks]
+    [projectId]
   );
 
   const childCounts = useMemo(() => {
