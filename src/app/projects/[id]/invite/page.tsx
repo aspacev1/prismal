@@ -33,7 +33,7 @@ export default async function ProjectInvitePage({ params }: { params: { id: stri
           <Box sx={{ mt: 4 }}>
             <Button
               component={Link}
-              href={`/projects/${project.id}/start`}
+              href={`/projects/${project.id}`}
               variant="contained"
               size="large"
               fullWidth
