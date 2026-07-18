@@ -1,7 +1,18 @@
 export const DAY_WIDTH = 36;
-export const ROW_HEIGHT = 44;
-export const SUB_ROW_HEIGHT = 38;
+export const ROW_HEIGHT = 48;
+export const SUB_ROW_HEIGHT = 40;
 export const HEADER_HEIGHT = 52;
+// Header day numbers and body gridlines render only every N days — the
+// per-day cells (and all DAY_WIDTH drag math) are unchanged; only which
+// cells get a label/line is sparser. Index-anchored to the range start.
+export const TICK_INTERVAL_DAYS = 4;
+// Bar heights: tall enough for an on-bar status label (tasks) per the
+// epic-color redesign; categories render as a slim background pill.
+export const BAR_HEIGHT_TASK = 22;
+export const BAR_HEIGHT_SUBTASK = 16;
+export const BAR_HEIGHT_CATEGORY = 18;
+// Below this bar width the on-bar status label is hidden (tooltip remains).
+export const MIN_LABEL_BAR_WIDTH = 76;
 export const SIDEBAR_WIDTH = 280;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 440;
@@ -37,24 +48,15 @@ export const STATUSES: Record<TaskStatus, { label: string; fill: string; textCol
   archived: { label: "Archived", fill: "#D5D9E0", textColor: "#677692" },
 };
 
-// Task/subtask Gantt bars now render as the brand gradient at an opacity
-// reflecting status, replacing per-status bar color as the status signal.
-// `delayed`/`blocked` are exceptions (not points on a progress ladder) and
-// always render fully opaque so they visually demand attention regardless
-// of actual progress — see docs/superpowers/specs/2026-07-06-roadmap-brand-alignment-design.md.
-export const STATUS_BAR_OPACITY: Record<TaskStatus, number> = {
-  todo: 0.25,
-  in_progress: 0.5,
-  in_review: 0.7,
-  delayed: 1,
-  blocked: 1,
-  completed: 1,
-  archived: 0.15,
-};
-
-// Statuses that are exceptions rather than progress stages — these keep a
-// small StatusDot on the bar itself (in addition to full opacity) since
-// opacity alone can't distinguish "delayed" from "completed" at 1.0.
+// Bars render in their epic's color (see src/lib/epicPalette.ts): a solid
+// segment sized by `progress` over a light tint of the same hue, with the
+// status carried by an on-bar label and a status-colored end dot — see
+// docs/superpowers/specs/2026-07-18-gantt-epic-color-redesign-design.md
+// (which reverses the earlier gradient/opacity encoding).
+//
+// Statuses that are exceptions rather than progress stages — their on-bar
+// label renders in the status's own color (not white/epic-dark) so
+// "delayed"/"blocked" stay flagged regardless of the progress fill.
 export const EXCEPTION_STATUSES: TaskStatus[] = ["delayed", "blocked"];
 
 export const STATUS_LIST: TaskStatus[] = [
