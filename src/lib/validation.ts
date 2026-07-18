@@ -62,17 +62,12 @@ const TASK_STATUSES = [
   "archived",
 ] as const;
 const TASK_PRIORITIES = ["low", "medium", "high", "critical"] as const;
-const TASK_KINDS = ["category", "task", "milestone"] as const;
-// "estimated": dates were system-guessed at creation (ghost bar).
-// "confirmed": the user committed the dates (drag, manual entry, deliberate drop).
-// "unscheduled": deliberately parked in the backlog with no dates.
-const SCHEDULE_STATUSES = ["estimated", "confirmed", "unscheduled"] as const;
+const TASK_KINDS = ["category", "task"] as const;
 
 export const createTaskSchema = z.object({
   name: z.string().trim().min(1),
   description: z.string().trim().optional().nullable(),
   kind: z.enum(TASK_KINDS).optional(),
-  scheduleStatus: z.enum(SCHEDULE_STATUSES).optional(),
   startDate: z.string().datetime().optional().nullable(),
   durationDays: z.number().int().min(0).max(365).optional(),
   loggedHours: z.number().min(0).optional(),
@@ -89,7 +84,6 @@ export const updateTaskSchema = z.object({
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional().nullable(),
   kind: z.enum(TASK_KINDS).optional(),
-  scheduleStatus: z.enum(SCHEDULE_STATUSES).optional(),
   startDate: z.string().datetime().optional().nullable(),
   durationDays: z.number().int().min(0).max(365).optional(),
   loggedHours: z.number().min(0).optional(),

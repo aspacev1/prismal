@@ -71,7 +71,7 @@ export default function TaskSidebar({
   expanded: Set<string>;
   onToggleExpand: (id: string) => void;
   childCounts: Record<string, number>;
-  onAddChild: (parentId: string, name: string, kind?: "task" | "milestone") => Promise<{ ok: boolean }>;
+  onAddChild: (parentId: string, name: string) => Promise<{ ok: boolean }>;
   onAddEpic: (name: string) => Promise<{ ok: boolean }>;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
   onReorder: (items: { id: string; order: number }[]) => void;
@@ -86,7 +86,6 @@ export default function TaskSidebar({
 }) {
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
   const [inlineAddValue, setInlineAddValue] = useState("");
-  const [inlineAddKind, setInlineAddKind] = useState<"task" | "milestone">("task");
   const [isAddingEpic, setIsAddingEpic] = useState(false);
   const [epicInputValue, setEpicInputValue] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -128,24 +127,19 @@ export default function TaskSidebar({
     return members.find((m) => m.id === task.assigneeId) ?? null;
   }
 
-  // Keyboard-first bulk entry: Enter commits the name and keeps the input
-  // open for the next one (each commit gets a cascading ghost bar), so ten
-  // task names can be typed without touching the mouse. Blur commits and
-  // closes; Escape cancels an empty in-progress row.
-  async function commitInlineAdd(parentId: string, keepOpen = false) {
+  async function commitInlineAdd(parentId: string) {
     const name = inlineAddValue.trim();
     if (!name) { setInlineAddParentId(null); setInlineAddValue(""); return; }
+    await onAddChild(parentId, name);
+    setInlineAddParentId(null);
     setInlineAddValue("");
-    if (!keepOpen) setInlineAddParentId(null);
-    await onAddChild(parentId, name, inlineAddKind);
   }
 
-  function handleAddChildClick(parentId: string, kind: "task" | "milestone" = "task") {
+  function handleAddChildClick(parentId: string) {
     // Expand (never collapse) the parent so the inline input and the new child
     // are visible — onToggleExpand on an already-expanded row would fold it.
     if (!expanded.has(parentId)) onToggleExpand(parentId);
     setInlineAddParentId(parentId);
-    setInlineAddKind(kind);
     setInlineAddValue("");
   }
 
@@ -154,10 +148,10 @@ export default function TaskSidebar({
     setEpicInputValue("");
   }
 
-  function openAddTaskForLastEpic(kind: "task" | "milestone" = "task") {
+  function openAddTaskForLastEpic() {
     const lastEpic = [...topLevelRows].reverse().find((r) => r.kind === "category");
     if (!lastEpic) return;
-    handleAddChildClick(lastEpic.id, kind);
+    handleAddChildClick(lastEpic.id);
   }
 
   async function commitAddEpic() {
@@ -357,7 +351,6 @@ export default function TaskSidebar({
                   setInlineAddValue={setInlineAddValue}
                   setInlineAddParentId={setInlineAddParentId}
                   commitInlineAdd={commitInlineAdd}
-                  inlineAddKind={inlineAddKind}
                   inputRef={inputRef}
                   childIds={childIds}
                   isExpanded={isExpanded}
@@ -396,7 +389,6 @@ export default function TaskSidebar({
                             setInlineAddValue={setInlineAddValue}
                             setInlineAddParentId={setInlineAddParentId}
                             commitInlineAdd={commitInlineAdd}
-                            inlineAddKind={inlineAddKind}
                             inputRef={inputRef}
                             childIds={grandChildIds}
                             isExpanded={childExpanded}
@@ -424,7 +416,6 @@ export default function TaskSidebar({
                                     setInlineAddValue={setInlineAddValue}
                                     setInlineAddParentId={setInlineAddParentId}
                                     commitInlineAdd={commitInlineAdd}
-                            inlineAddKind={inlineAddKind}
                                     inputRef={inputRef}
                                     childIds={[]}
                                     isExpanded={false}
@@ -532,20 +523,6 @@ export default function TaskSidebar({
               >
                 + Add a task
               </Box>
-              <Box
-                component="span"
-                onClick={() => { if (hasEpics) openAddTaskForLastEpic("milestone"); }}
-                sx={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: hasEpics ? "text.disabled" : "rgba(0,0,0,0.22)",
-                  cursor: hasEpics ? "pointer" : "not-allowed",
-                  "&:hover": hasEpics ? { color: "primary.main" } : {},
-                }}
-                title={hasEpics ? "Creates a ghost diamond with an estimated date — drag to place it" : "Сначала создайте эпик"}
-              >
-                + Add a milestone
-              </Box>
             </Box>
           )
         )}
@@ -573,7 +550,6 @@ function SortableRow({
   setInlineAddValue,
   setInlineAddParentId,
   commitInlineAdd,
-  inlineAddKind = "task",
   inputRef,
   childIds: _childIds,
   isExpanded,
@@ -596,8 +572,7 @@ function SortableRow({
   inlineAddValue: string;
   setInlineAddValue: (v: string) => void;
   setInlineAddParentId: (v: string | null) => void;
-  commitInlineAdd: (parentId: string, keepOpen?: boolean) => void;
-  inlineAddKind?: "task" | "milestone";
+  commitInlineAdd: (parentId: string) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
   childIds: string[];
   isExpanded: boolean;
@@ -766,12 +741,6 @@ function SortableRow({
         )}
 
         <StatusDot status={row.status} size={8} />
-        {row.kind === "milestone" && (
-          <Box
-            sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: row.color ?? "#D99A20", flexShrink: 0 }}
-            title="Milestone"
-          />
-        )}
         {!isCategory && <PriorityIcon priority={row.priority} size={11} />}
 
         {member && !isCategory && (
@@ -908,24 +877,16 @@ function SortableRow({
           }}
         >
           <Box sx={{ width: 16, flexShrink: 0 }} />
-          {inlineAddKind === "milestone" && (
-            <Box
-              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: "#D99A20", flexShrink: 0 }}
-              title="Milestone"
-            />
-          )}
           <input
             ref={(el) => { (inputRef as React.MutableRefObject<HTMLInputElement | null>).current = el; }}
             value={inlineAddValue}
             onChange={(e) => setInlineAddValue(e.target.value)}
             onKeyDown={(e) => {
-              // Enter commits and keeps the input open for the next name
-              // (bulk entry); Escape cancels the in-progress row.
-              if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(row.id, true); }
+              if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(row.id); }
               if (e.key === "Escape") { setInlineAddParentId(null); setInlineAddValue(""); }
             }}
             onBlur={() => commitInlineAdd(row.id)}
-            placeholder={inlineAddKind === "milestone" ? "Milestone name…" : isCategory ? "Task name…" : "Subtask name…"}
+            placeholder={isCategory ? "Task name…" : "Subtask name…"}
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 13, fontWeight: 500, color: "inherit" }}
           />
         </Box>
