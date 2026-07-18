@@ -3,6 +3,8 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
 import {
   DAY_WIDTH,
   HEADER_HEIGHT,
@@ -34,6 +36,11 @@ import type { TaskRow, MemberOption } from "./types";
 
 type LiveOverride = { rowId: string; start: Date; duration: number } | null;
 
+// The distinct milestone accent (gold) so diamonds pop when scanning the
+// chart; completed milestones go green like other completed elements.
+const MILESTONE_COLOR = "#D99A20";
+const MILESTONE_DONE_COLOR = "#38825B";
+
 export default function GanttGrid({
   rows,
   members,
@@ -44,6 +51,8 @@ export default function GanttGrid({
   onSelect,
   rollupsByCategory,
   allTasksById,
+  onCreateMilestone,
+  onScheduleFromBacklog,
 }: {
   rows: TaskRow[];
   members: MemberOption[];
@@ -61,6 +70,8 @@ export default function GanttGrid({
   onSelect: (id: string) => void;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
   allTasksById: Record<string, TaskRow>;
+  onCreateMilestone?: (parentId: string, name: string, date: Date) => void;
+  onScheduleFromBacklog?: (taskId: string, date: Date) => void;
 }) {
   const dragRef = useRef<{
     rowId: string;
@@ -72,7 +83,46 @@ export default function GanttGrid({
   } | null>(null);
   const [liveOverride, setLiveOverride] = useState<LiveOverride>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Right-click "Add milestone here" flow: a context menu anchored at the
+  // click, then an inline naming card at the clicked date. The milestone is
+  // only created on Enter, so Escape/blur can never leave an orphan.
+  const [milestoneMenu, setMilestoneMenu] = useState<{
+    mouseX: number;
+    mouseY: number;
+    date: Date;
+    parentId: string | null;
+    rowTop: number;
+  } | null>(null);
+  const [milestoneDraft, setMilestoneDraft] = useState<{
+    date: Date;
+    parentId: string;
+    top: number;
+    name: string;
+  } | null>(null);
   const today = useMemo(() => getToday(), []);
+
+  // Walk up to the enclosing epic — milestones (like tasks) must live under one.
+  const epicIdFor = useCallback(
+    (row: TaskRow): string | null => {
+      let cur: TaskRow | undefined = row;
+      while (cur && cur.kind !== "category") {
+        cur = cur.parentId ? allTasksById[cur.parentId] : undefined;
+      }
+      return cur?.id ?? null;
+    },
+    [allTasksById]
+  );
+
+  const dateAtClientX = useCallback(
+    (clientX: number, containerLeft: number): Date => {
+      const dayIdx = Math.min(
+        Math.max(Math.floor((clientX - containerLeft) / DAY_WIDTH), 0),
+        totalDays - 1
+      );
+      return addDays(rangeStart, dayIdx);
+    },
+    [rangeStart, totalDays]
+  );
 
   const dayLabels = useMemo(() => {
     const labels: { date: Date; isWeekendDay: boolean; isFirstOfMonth: boolean; isToday: boolean }[] = [];
@@ -264,8 +314,24 @@ export default function GanttGrid({
         ))}
       </Box>
 
-      {/* Body */}
-      <Box sx={{ position: "relative", height: totalHeight }}>
+      {/* Body — also the drop target for scheduling backlog tasks: dropping
+          at a date confirms that date deliberately (solid bar, not a ghost). */}
+      <Box
+        sx={{ position: "relative", height: totalHeight }}
+        onDragOver={(e) => {
+          if (onScheduleFromBacklog && e.dataTransfer.types.includes("application/x-flowline-task")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }
+        }}
+        onDrop={(e) => {
+          const taskId = e.dataTransfer.getData("application/x-flowline-task");
+          if (!taskId || !onScheduleFromBacklog) return;
+          e.preventDefault();
+          const rect = e.currentTarget.getBoundingClientRect();
+          onScheduleFromBacklog(taskId, dateAtClientX(e.clientX, rect.left));
+        }}
+      >
         {/* Zebra rows */}
         <Box sx={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
           {displayRows.map((row, i) =>
@@ -360,12 +426,16 @@ export default function GanttGrid({
                 const depEnd = depRow.durationDays > 0
                   ? workEndDate(depStart, depRow.durationDays)
                   : depStart;
-                const fromX = (daysBetween(rangeStart, depEnd) + 1) * DAY_WIDTH;
+                // Diamonds accept dependency connections at their center point
+                // rather than a bar edge.
+                const fromX = depRow.kind === "milestone"
+                  ? daysBetween(rangeStart, depEnd) * DAY_WIDTH + DAY_WIDTH / 2
+                  : (daysBetween(rangeStart, depEnd) + 1) * DAY_WIDTH;
                 const fromY = rowTops[depIdx] + rowHeights[depIdx] / 2;
                 const toX = daysBetween(
                   rangeStart,
                   row.startDate ? new Date(row.startDate) : new Date()
-                ) * DAY_WIDTH;
+                ) * DAY_WIDTH + (row.kind === "milestone" ? DAY_WIDTH / 2 : 0);
                 const toY = rowTops[toIdx] + rowHeights[toIdx] / 2;
                 const midX = (fromX + toX) / 2;
                 const dimmed = hoveredId !== null && hoveredId !== row.id && hoveredId !== dep.predecessorId;
@@ -445,6 +515,11 @@ export default function GanttGrid({
         {/* Bars */}
         {displayRows.map((row, i) => {
           const isCategory = row.kind === "category";
+          const isMilestone = row.kind === "milestone";
+          // System-guessed dates render as a "ghost" until the user commits
+          // real dates — the dashed border carries the signal (not color
+          // alone) so the distinction survives color-blindness.
+          const isEstimated = !isCategory && row.scheduleStatus === "estimated";
           const rollup = isCategory ? rollupsByCategory[row.id] : null;
           const rollupStart = isCategory ? (rollup?.startDate ?? null) : null;
           const rollupEnd = isCategory ? (rollup?.endDate ?? null) : null;
@@ -518,6 +593,16 @@ export default function GanttGrid({
             ? ghostEndPx - ghostStartPx2
             : 0;
 
+          // Milestone diamond geometry — centered on its date's day cell.
+          const msSize = row.isSubtask ? 12 : 16;
+          const msCenterX = taskStart
+            ? daysBetween(rangeStart, taskStart) * DAY_WIDTH + DAY_WIDTH / 2
+            : 0;
+          const msColor = row.color ?? (row.status === "completed" ? MILESTONE_DONE_COLOR : MILESTONE_COLOR);
+          // Label sits right of the diamond by default; flip to the left when
+          // the diamond is close enough to the chart's right edge to clip it.
+          const msLabelOnLeft = msCenterX > chartWidth - 160;
+
           const workedSoFar = !isCategory && taskStart && row.durationDays > 0
             ? today <= taskStart ? 0 : Math.min(workDaysBetween(taskStart, addDays(today, -1)), row.durationDays)
             : 0;
@@ -533,6 +618,19 @@ export default function GanttGrid({
               key={row.id}
               onMouseEnter={() => setHoveredId(row.id)}
               onMouseLeave={() => setHoveredId(null)}
+              onContextMenu={(e) => {
+                if (!onCreateMilestone) return;
+                e.preventDefault();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setMilestoneDraft(null);
+                setMilestoneMenu({
+                  mouseX: e.clientX,
+                  mouseY: e.clientY,
+                  date: dateAtClientX(e.clientX, rect.left),
+                  parentId: epicIdFor(row),
+                  rowTop: rowTops[i],
+                });
+              }}
               sx={{
                 position: "absolute",
                 left: 0,
@@ -640,7 +738,7 @@ export default function GanttGrid({
               )}
 
               {/* Thin bar (Tasks + Subtasks, only when planned) */}
-              {!isCategory && row.startDate && row.durationDays > 0 && (
+              {!isCategory && !isMilestone && row.startDate && row.durationDays > 0 && (
                 <Box
                   onClick={() => onSelect(row.id)}
                   onMouseDown={(e) => handleMouseDown(e, row, "move")}
@@ -653,35 +751,72 @@ export default function GanttGrid({
                     height: barHeight,
                     borderRadius: 0.5,
                     cursor: "grab",
-                    background: barGradient,
+                    // Ghost (estimated) bars: muted fixed-opacity fill + dashed
+                    // border, so "system-guessed dates" never read as a
+                    // committed plan. Confirmed bars keep the status-opacity
+                    // gradient system.
+                    background: isEstimated
+                      ? "linear-gradient(135deg, rgba(45,110,239,0.28) 0%, rgba(15,169,192,0.28) 100%)"
+                      : barGradient,
                     // A constant-opacity border (independent of the status-driven
                     // fill opacity above) so low-opacity bars (todo, archived)
                     // still have a visible edge for locating start/end and the
                     // drag-resize affordance — the fill alone can be nearly
                     // invisible at 0.15-0.25 opacity (per code review).
-                    border: "1px solid rgba(45,110,239,0.3)",
+                    border: isEstimated ? "1.5px dashed #496FE0" : "1px solid rgba(45,110,239,0.3)",
                     outline: overBudget ? "2px solid #DC2F4E" : "none",
                     outlineOffset: overBudget ? "1px" : "0",
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
                     zIndex: 20,
-                    transition: "box-shadow 0.15s",
+                    // Background/border are in the transition so the ghost →
+                    // solid flip on confirmation reads as a short fade.
+                    transition: "box-shadow 0.15s, background 0.15s ease, border 0.15s ease",
                     boxShadow: isSelected ? "0 0 0 2px rgba(79,93,255,0.4)" : "none",
                     "&:active": { cursor: "grabbing" },
                     "&:hover .resize-handle": { opacity: 1 },
                   }}
-                  title={`${row.name} — ${status.label}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
+                  title={`${row.name} — ${status.label}${isEstimated ? " — dates estimated, drag to schedule" : ""}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
                 >
                   {isExceptionStatus && (
                     <Box sx={{ position: "absolute", left: 2, top: "50%", transform: "translateY(-50%)", zIndex: 25 }}>
                       <StatusDot status={row.status} size={row.isSubtask ? 6 : 8} />
                     </Box>
                   )}
+                {/* Estimated indicator — "≈" badge at the bar's left edge */}
+                {isEstimated && (
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      top: -7,
+                      left: -7,
+                      width: 15,
+                      height: 15,
+                      borderRadius: "50%",
+                      bgcolor: "#fff",
+                      border: "1px dashed #496FE0",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 30,
+                      color: "#496FE0",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      pointerEvents: "auto",
+                    }}
+                    title="Dates estimated — drag to schedule"
+                  >
+                    ≈
+                  </Box>
+                )}
+
                 {/* Worked-so-far fill — a distinct signal (hours logged vs. planned)
                     from the status-opacity gradient above, so it stays flat brand
-                    blue rather than picking up the status color. */}
-                {filledWidthPx > 0 && (
+                    blue rather than picking up the status color. Suppressed for
+                    ghost bars: guessed dates have no meaningful elapsed work. */}
+                {filledWidthPx > 0 && !isEstimated && (
                   <Box
                     sx={{
                       position: "absolute",
@@ -843,8 +978,63 @@ export default function GanttGrid({
                 </Box>
               )}
 
+              {/* Milestone — a zero-duration point rendered as a diamond
+                  centered on its date, never as a bar. Horizontal drag moves
+                  the date (day snapping via the shared drag handler); there is
+                  deliberately no resize affordance — converting back to a task
+                  is how it regains duration. */}
+              {!isCategory && isMilestone && row.startDate && (
+                <>
+                  <Box
+                    onClick={() => onSelect(row.id)}
+                    onMouseDown={(e) => handleMouseDown(e, row, "move")}
+                    sx={{
+                      position: "absolute",
+                      top: "50%",
+                      left: msCenterX - msSize / 2,
+                      width: msSize,
+                      height: msSize,
+                      transform: "translateY(-50%) rotate(45deg)",
+                      borderRadius: "2px",
+                      cursor: "grab",
+                      // Ghost (estimated) diamonds mirror the ghost-bar system:
+                      // dashed outline + muted fill until the date is confirmed.
+                      bgcolor: isEstimated ? `${msColor}55` : msColor,
+                      border: isEstimated ? `1.5px dashed ${msColor}` : `1px solid ${msColor}`,
+                      zIndex: 20,
+                      transition: "box-shadow 0.15s, background-color 0.15s ease, border 0.15s ease",
+                      boxShadow: isSelected ? "0 0 0 2px rgba(79,93,255,0.4)" : "none",
+                      "&:active": { cursor: "grabbing" },
+                    }}
+                    title={`${row.name} — milestone, done by end of ${taskStart!.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}${isEstimated ? " (date estimated — drag to schedule)" : ""}`}
+                  />
+                  {/* Always-visible label; flips left near the right edge */}
+                  <Typography
+                    noWrap
+                    sx={{
+                      position: "absolute",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      ...(msLabelOnLeft
+                        ? { right: chartWidth - (msCenterX - msSize / 2 - 6) }
+                        : { left: msCenterX + msSize / 2 + 6 }),
+                      maxWidth: 140,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "text.secondary",
+                      pointerEvents: "none",
+                      zIndex: 20,
+                    }}
+                  >
+                    {row.name}
+                  </Typography>
+                </>
+              )}
+
               {/* Unplanned task placeholder (no start date or duration 0) */}
-              {!isCategory && (!row.startDate || row.durationDays === 0) && (
+              {!isCategory && !isMilestone && (!row.startDate || row.durationDays === 0) && (
                 <Box
                   onClick={() => onSelect(row.id)}
                   sx={{
@@ -867,7 +1057,96 @@ export default function GanttGrid({
             </Box>
           );
         })}
+
+        {/* Inline naming card for a right-click-created milestone. The
+            milestone exists only after Enter — Escape/blur leave nothing. */}
+        {milestoneDraft && (
+          <Box
+            sx={{
+              position: "absolute",
+              left: Math.max(daysBetween(rangeStart, milestoneDraft.date) * DAY_WIDTH - 4, 0),
+              top: milestoneDraft.top + 6,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              px: 1,
+              py: 0.5,
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              boxShadow: 4,
+              zIndex: 40,
+            }}
+          >
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                transform: "rotate(45deg)",
+                borderRadius: "1.5px",
+                bgcolor: MILESTONE_COLOR,
+                flexShrink: 0,
+              }}
+            />
+            <input
+              autoFocus
+              value={milestoneDraft.name}
+              onChange={(e) => setMilestoneDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const name = milestoneDraft.name.trim();
+                  if (name && onCreateMilestone) {
+                    onCreateMilestone(milestoneDraft.parentId, name, milestoneDraft.date);
+                  }
+                  setMilestoneDraft(null);
+                }
+                if (e.key === "Escape") setMilestoneDraft(null);
+              }}
+              onBlur={() => setMilestoneDraft(null)}
+              placeholder="Milestone name…"
+              style={{
+                width: 160,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                fontSize: 13,
+                fontWeight: 500,
+              }}
+            />
+          </Box>
+        )}
       </Box>
+
+      {/* Right-click context menu: "Add milestone here" */}
+      <Menu
+        open={milestoneMenu !== null}
+        onClose={() => setMilestoneMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={
+          milestoneMenu ? { top: milestoneMenu.mouseY, left: milestoneMenu.mouseX } : undefined
+        }
+      >
+        <MenuItem
+          disabled={!milestoneMenu?.parentId}
+          onClick={() => {
+            if (!milestoneMenu?.parentId) return;
+            setMilestoneDraft({
+              date: milestoneMenu.date,
+              parentId: milestoneMenu.parentId,
+              top: milestoneMenu.rowTop,
+              name: "",
+            });
+            setMilestoneMenu(null);
+          }}
+          sx={{ fontSize: 13 }}
+        >
+          {milestoneMenu?.parentId
+            ? `Add milestone here (${milestoneMenu.date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })})`
+            : "Add milestone here — needs an epic"}
+        </MenuItem>
+      </Menu>
 
       {/* Bottom spacer matching the sidebar's sticky "+ Add an epic" footer.
           The sidebar's scrollable content is its rows plus that footer; the

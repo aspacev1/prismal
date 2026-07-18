@@ -32,19 +32,23 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import TaskSidebar from "./gantt/TaskSidebar";
 import GanttGrid from "./gantt/GanttGrid";
 import TaskDetailPanel from "./gantt/TaskDetailPanel";
+import BacklogPanel from "./gantt/BacklogPanel";
 import ScheduleChangeDialog, { type ScheduleChangeData } from "./gantt/ScheduleChangeDialog";
 import {
   STATUSES,
   isStatus,
   type TaskStatus,
   DAY_WIDTH,
+  ROW_HEIGHT,
+  SUB_ROW_HEIGHT,
+  HEADER_HEIGHT,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
 } from "./gantt/constants";
 import { StatusDot } from "./gantt/shared";
 import { rollupChildren } from "./gantt/rollups";
-import type { TaskRow, MemberOption, TaskKind, TaskDraft } from "./gantt/types";
+import type { TaskRow, MemberOption, TaskKind, TaskDraft, ScheduleStatus } from "./gantt/types";
 import {
   addDays,
   daysBetween,
@@ -52,12 +56,14 @@ import {
   workEndDate,
   getToday,
 } from "@/lib/dateUtils";
+import { resolveDefaultSchedule } from "@/lib/scheduling";
 
 type ApiTask = {
   id: string;
   name: string;
   description: string | null;
   kind: TaskKind;
+  scheduleStatus: ScheduleStatus;
   startDate: string | null;
   durationDays: number;
   originalEndDate: string | null;
@@ -86,18 +92,20 @@ type ApiTask = {
 };
 
 // Shape of the task returned by POST /tasks: raw Prisma includes rather than
-// the mapped shape GET returns (`predecessorDeps` instead of `deps`).
+// the mapped shape GET returns. Prisma's `successorDeps` relation holds the
+// rows where the task is the successor — i.e. the rows naming its
+// predecessors — matching the GET route's mapping.
 type CreatedApiTask = Omit<ApiTask, "deps" | "successorDeps"> & {
-  predecessorDeps: { predecessorId: string }[];
-  successorDeps: { id: string }[];
+  predecessorDeps: { id: string }[];
+  successorDeps: { predecessorId: string }[];
 };
 
 function toApiTask(t: CreatedApiTask): ApiTask {
   const { predecessorDeps, successorDeps, ...rest } = t;
   return {
     ...rest,
-    deps: predecessorDeps.map((d) => ({ predecessorId: d.predecessorId })),
-    successorDeps: successorDeps.map((s) => ({ id: s.id })),
+    deps: successorDeps.map((d) => ({ predecessorId: d.predecessorId })),
+    successorDeps: predecessorDeps.map((s) => ({ id: s.id })),
   };
 }
 
@@ -248,18 +256,35 @@ export default function RoadmapTab({
     });
   }, [tasks, onlyDependent, view, dependentIds]);
 
+  // Unscheduled (backlog) tasks render no row on the chart — they live only
+  // in the backlog panel, keeping the "no bar = bug" principle intact for
+  // every row that IS on the chart.
+  const chartTasks = useMemo(
+    () => effectiveTasks.filter((t) => t.scheduleStatus !== "unscheduled"),
+    [effectiveTasks]
+  );
+
+  const backlogItems: TaskRow[] = useMemo(
+    () =>
+      tasks
+        .filter((t) => t.scheduleStatus === "unscheduled")
+        .sort((a, b) => a.order - b.order)
+        .map((t) => ({ ...t, isSubtask: false })),
+    [tasks]
+  );
+
   // Build flat rows: Category → Task → Subtask (expanded).
   // Sort each level by `order` so optimistic reorder updates are reflected immediately.
   const rows: TaskRow[] = useMemo(() => {
-    const topLevel = effectiveTasks.filter((t) => !t.parentId).sort((a, b) => a.order - b.order);
+    const topLevel = chartTasks.filter((t) => !t.parentId).sort((a, b) => a.order - b.order);
     const out: TaskRow[] = [];
     for (const t of topLevel) {
-      const children = effectiveTasks.filter((x) => x.parentId === t.id).sort((a, b) => a.order - b.order);
+      const children = chartTasks.filter((x) => x.parentId === t.id).sort((a, b) => a.order - b.order);
       out.push({ ...t, isSubtask: false });
       if (expanded.has(t.id)) {
         for (const c of children) {
           out.push({ ...c, isSubtask: false });
-          const grandChildren = effectiveTasks.filter((x) => x.parentId === c.id).sort((a, b) => a.order - b.order);
+          const grandChildren = chartTasks.filter((x) => x.parentId === c.id).sort((a, b) => a.order - b.order);
           if (expanded.has(c.id)) {
             for (const g of grandChildren) out.push({ ...g, isSubtask: true });
           }
@@ -267,12 +292,16 @@ export default function RoadmapTab({
       }
     }
     return out;
-  }, [effectiveTasks, expanded]);
+  }, [chartTasks, expanded]);
 
-  const selectedRow = useMemo(
-    () => rows.find((r) => r.id === selectedId) ?? null,
-    [rows, selectedId]
-  );
+  // Backlog (unscheduled) tasks have no chart row but can still be selected
+  // from the backlog panel, so fall back to the raw task list.
+  const selectedRow = useMemo(() => {
+    const fromRows = rows.find((r) => r.id === selectedId);
+    if (fromRows) return fromRows;
+    const t = selectedId ? tasks.find((x) => x.id === selectedId) : undefined;
+    return t ? { ...t, isSubtask: false } : null;
+  }, [rows, tasks, selectedId]);
 
   // Range: left edge = project start (−1 day pad) if set, otherwise today − 7.
   // Right edge = latest task end + 14 days, or today + 21 if no tasks.
@@ -370,13 +399,15 @@ export default function RoadmapTab({
       patch: {
         name?: string;
         description?: string | null;
-        startDate?: string;
+        startDate?: string | null;
         durationDays?: number;
         loggedHours?: number;
         progress?: number;
         status?: string;
         priority?: string;
         assigneeId?: string | null;
+        kind?: TaskKind;
+        scheduleStatus?: ScheduleStatus;
       },
       confirmedDelay = false,
       reason?: string
@@ -424,6 +455,161 @@ export default function RoadmapTab({
     [projectId]
   );
 
+  // ---- Undo (Ctrl/Cmd+Z) for schedule-shaping actions -------------------
+  // A small client-side stack of "restore this task's prior schedule state"
+  // entries, pushed by actions whose date changes are frictionless server-side
+  // (ghost-bar drags, backlog moves, conversions). Deliberate re-planning of
+  // confirmed tasks stays under the existing reason/delay dialog flow and is
+  // not undoable from here.
+  const undoStackRef = useRef<
+    {
+      taskId: string;
+      before: {
+        startDate: string | null;
+        durationDays: number;
+        scheduleStatus: ScheduleStatus;
+        kind: TaskKind;
+      };
+    }[]
+  >([]);
+
+  const pushUndo = useCallback((task: ApiTask) => {
+    undoStackRef.current.push({
+      taskId: task.id,
+      before: {
+        startDate: task.startDate,
+        durationDays: task.durationDays,
+        scheduleStatus: task.scheduleStatus,
+        kind: task.kind,
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== "z") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return; // let text fields keep their native undo
+      }
+      const entry = undoStackRef.current.pop();
+      if (!entry) return;
+      e.preventDefault();
+      // Sending the explicit prior scheduleStatus/kind is what lets the
+      // server skip the reason/delay guards and restore baselines correctly.
+      patchTask(entry.taskId, { ...entry.before }).then((r) => {
+        if (!r.ok) fetchTasks();
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [patchTask, fetchTasks]);
+
+  // ---- Scroll a newly created/scheduled bar into view -------------------
+  // Trailing 250ms debounce so rapid keyboard entry (Enter, type, Enter…)
+  // scrolls once to the latest bar instead of thrashing on every commit.
+  const [scrollRequest, setScrollRequest] = useState<{ id: string; seq: number } | null>(null);
+  const scrollSeqRef = useRef(0);
+  const requestScrollToTask = useCallback((taskId: string) => {
+    scrollSeqRef.current += 1;
+    setScrollRequest({ id: taskId, seq: scrollSeqRef.current });
+  }, []);
+
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const timer = setTimeout(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const task = tasks.find((t) => t.id === scrollRequest.id);
+      if (!task?.startDate) return;
+      // Horizontal: only move if the bar is outside the visible timeline;
+      // park it roughly in the left third of the viewport.
+      const barLeft = daysBetween(rangeStart, new Date(task.startDate)) * DAY_WIDTH;
+      const viewW = el.clientWidth;
+      const inViewX = barLeft >= el.scrollLeft && barLeft + DAY_WIDTH * 2 <= el.scrollLeft + viewW;
+      if (!inViewX) {
+        el.scrollTo({ left: Math.max(barLeft - viewW / 3, 0), behavior: "smooth" });
+      }
+      // Vertical: make sure the row is visible under the sticky header (the
+      // sidebar follows via the mirrored-scroll sync).
+      const idx = rows.findIndex((r) => r.id === scrollRequest.id);
+      if (idx >= 0) {
+        let rowTop = 0;
+        for (let i = 0; i < idx; i++) rowTop += rows[i].isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT;
+        const rowH = rows[idx].isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT;
+        const contentTop = HEADER_HEIGHT + rowTop;
+        const visTop = el.scrollTop + HEADER_HEIGHT;
+        const visBottom = el.scrollTop + el.clientHeight;
+        if (contentTop < visTop) {
+          el.scrollTo({ top: rowTop, behavior: "smooth" });
+        } else if (contentTop + rowH > visBottom) {
+          el.scrollTo({ top: contentTop + rowH - el.clientHeight, behavior: "smooth" });
+        }
+      }
+      // Clear the served request so unrelated task mutations don't yank the
+      // viewport back here when this effect re-runs.
+      setScrollRequest(null);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [scrollRequest, tasks, rows, rangeStart]);
+
+  // Category rollups (client-side computed). Declared before the default-
+  // scheduling resolver below, which uses a category's rollup as the parent
+  // window for first-child scheduling.
+  const rollupsByCategory = useMemo(() => {
+    const m: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }> = {};
+    for (const t of tasks) {
+      if (t.kind === "category") {
+        const kids = tasks.filter((x) => x.parentId === t.id).map((x) => ({ ...x, isSubtask: false }));
+        m[t.id] = rollupChildren(kids);
+      }
+    }
+    return m;
+  }, [tasks]);
+
+  // ---- Default scheduling context (Phase 1) -----------------------------
+  // Resolve smart default dates for an item appended under `parentId`:
+  // chain from the sibling directly above, else the parent's window, else
+  // today clamped to the project range. Backlog items never anchor a chain.
+  const resolveDefaultsFor = useCallback(
+    (parentId: string | null) => {
+      const siblings = tasks
+        .filter(
+          (t) =>
+            (t.parentId ?? null) === parentId &&
+            t.kind !== "category" &&
+            t.scheduleStatus !== "unscheduled"
+        )
+        .sort((a, b) => a.order - b.order);
+      const siblingAbove = [...siblings].reverse().find((s) => s.startDate) ?? null;
+
+      const parent = parentId ? tasks.find((t) => t.id === parentId) : null;
+      let parentWindow: { startDate: Date; endDate: Date | null } | null = null;
+      if (parent) {
+        if (parent.kind === "category") {
+          const r = rollupsByCategory[parent.id];
+          if (r?.startDate) parentWindow = { startDate: r.startDate, endDate: r.endDate };
+        } else if (parent.startDate) {
+          const ps = new Date(parent.startDate);
+          parentWindow = { startDate: ps, endDate: workEndDate(ps, parent.durationDays) };
+        }
+      }
+
+      return resolveDefaultSchedule({
+        siblingAbove: siblingAbove
+          ? { startDate: siblingAbove.startDate, durationDays: siblingAbove.durationDays }
+          : null,
+        parentWindow,
+        projectStartDate,
+        today: getToday(),
+      });
+    },
+    [tasks, rollupsByCategory, projectStartDate]
+  );
+
   // Open the schedule-change dialog with delay + reason context.
   // Computes newEndDate locally so the dialog can render before any API call
   // when the change is a non-delay schedule edit (API returns 400 needsReason).
@@ -462,7 +648,15 @@ export default function RoadmapTab({
       _originalDuration: number
     ) => {
       const patch = { startDate: finalStart.toISOString(), durationDays: finalDuration };
+      // A drag on a ghost (estimated) bar confirms it server-side with no
+      // dialog — one gesture fully schedules a fresh task. Make that gesture
+      // undoable: Ctrl/Cmd+Z restores both the dates and the estimated flag.
+      const before = tasks.find((t) => t.id === rowId);
+      if (before && before.scheduleStatus === "estimated") pushUndo(before);
       const result = await patchTask(rowId, patch);
+      if (!result.ok && before && before.scheduleStatus === "estimated") {
+        undoStackRef.current.pop();
+      }
       if (result.needsConfirm && result.body) {
         openScheduleDialog(rowId, patch, true, result.body);
       } else if (result.needsReason) {
@@ -473,7 +667,7 @@ export default function RoadmapTab({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, patchTask]
+    [rows, tasks, patchTask, pushUndo]
   );
 
   // Detail panel schedule edits (start date / duration) — must go via dialog
@@ -748,16 +942,20 @@ export default function RoadmapTab({
   }, [projectId, members]);
 
   // Create a child (Task under a Category, or Subtask under a Task).
-  // Used by the hover-"+" inline add. The parent's kind determines the
-  // semantic level of the new row but the API just needs parentId + kind=task.
+  // Used by the hover-"+" inline add. Name-only creation always resolves
+  // smart default dates (never a date-picker): the new item appears instantly
+  // as a ghost bar — or a ghost diamond for milestones — cascading from the
+  // sibling above, and is scrolled into view.
   const createChild = useCallback(
-    async (parentId: string, name: string): Promise<{ ok: boolean }> => {
+    async (parentId: string, name: string, kind: "task" | "milestone" = "task"): Promise<{ ok: boolean }> => {
       const firstMember = members[0];
+      const defaults = resolveDefaultsFor(parentId);
       const body = {
         name: name.trim(),
-        kind: "task" as const,
-        startDate: getToday().toISOString(),
-        durationDays: 0,
+        kind,
+        startDate: defaults.startDate.toISOString(),
+        durationDays: kind === "milestone" ? 0 : defaults.durationDays,
+        scheduleStatus: "estimated" as const,
         status: "todo" as const,
         priority: "low" as const,
         parentId,
@@ -777,11 +975,12 @@ export default function RoadmapTab({
           next.add(parentId);
           return next;
         });
+        requestScrollToTask(data.task.id);
         return { ok: true };
       }
       return { ok: false };
     },
-    [projectId, members]
+    [projectId, members, resolveDefaultsFor, requestScrollToTask]
   );
 
   const createEpic = useCallback(
@@ -806,6 +1005,160 @@ export default function RoadmapTab({
     [projectId]
   );
 
+  // Right-click "Add milestone here": the user picked the date deliberately,
+  // so it's confirmed (solid diamond) from the start.
+  const handleCreateMilestone = useCallback(
+    async (parentId: string, name: string, date: Date) => {
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name,
+          kind: "milestone",
+          parentId,
+          startDate: date.toISOString(),
+          durationDays: 0,
+          scheduleStatus: "confirmed",
+          status: "todo",
+          priority: "medium",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          next.add(parentId);
+          return next;
+        });
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setActionError(body.error ?? "Couldn't create the milestone.");
+      }
+    },
+    [projectId]
+  );
+
+  // Drop from the backlog onto the timeline: scheduled at the hovered date
+  // with the default 1-day duration; the user chose the date deliberately,
+  // so the bar is confirmed (solid), not a ghost.
+  const handleScheduleFromBacklog = useCallback(
+    async (taskId: string, date: Date) => {
+      const before = tasks.find((t) => t.id === taskId);
+      if (!before || before.scheduleStatus !== "unscheduled") return;
+      pushUndo(before);
+      const result = await patchTask(taskId, {
+        startDate: date.toISOString(),
+        durationDays: 1,
+        scheduleStatus: "confirmed",
+      });
+      if (result.ok) {
+        requestScrollToTask(taskId);
+      } else {
+        undoStackRef.current.pop();
+        setActionError(result.error ?? "Couldn't schedule that task.");
+        fetchTasks();
+      }
+    },
+    [tasks, pushUndo, patchTask, requestScrollToTask, fetchTasks]
+  );
+
+  // Backlog "Schedule" button: applies the default scheduling logic instead
+  // of a chosen date, so the task lands on the chart as a ghost bar.
+  const handleScheduleWithDefaults = useCallback(
+    async (taskId: string) => {
+      const before = tasks.find((t) => t.id === taskId);
+      if (!before || before.scheduleStatus !== "unscheduled") return;
+      const defaults = resolveDefaultsFor(before.parentId ?? null);
+      pushUndo(before);
+      const result = await patchTask(taskId, {
+        startDate: defaults.startDate.toISOString(),
+        durationDays: defaults.durationDays,
+        scheduleStatus: "estimated",
+      });
+      if (result.ok) {
+        requestScrollToTask(taskId);
+      } else {
+        undoStackRef.current.pop();
+        setActionError(result.error ?? "Couldn't schedule that task.");
+        fetchTasks();
+      }
+    },
+    [tasks, resolveDefaultsFor, pushUndo, patchTask, requestScrollToTask, fetchTasks]
+  );
+
+  // Explicit "Move to backlog" (detail panel): clears dates, removes the bar.
+  // Dependency decision: dependencies stay attached — their lines simply
+  // don't render while the task is unscheduled, and they reconnect when it
+  // is scheduled again (there is no auto-scheduling engine to reflow them).
+  const handleMoveToBacklog = useCallback(
+    async (taskId: string) => {
+      const before = tasks.find((t) => t.id === taskId);
+      if (!before || before.kind === "milestone" || before.kind === "category") return;
+      pushUndo(before);
+      const result = await patchTask(taskId, { scheduleStatus: "unscheduled" });
+      if (!result.ok) {
+        undoStackRef.current.pop();
+        setActionError(result.error ?? "Couldn't move that task to the backlog.");
+        fetchTasks();
+      }
+    },
+    [tasks, pushUndo, patchTask, fetchTasks]
+  );
+
+  // Task ↔ milestone conversion. The server collapses/expands the dates
+  // (bar end ↔ 1-day bar) and enforces the guards (no subtasks, must be
+  // scheduled first); undo restores the exact prior dates and duration.
+  const handleConvertKind = useCallback(
+    async (taskId: string, toKind: "task" | "milestone") => {
+      const before = tasks.find((t) => t.id === taskId);
+      if (!before) return;
+      pushUndo(before);
+      const result = await patchTask(taskId, { kind: toKind });
+      if (!result.ok) {
+        undoStackRef.current.pop();
+        setActionError(result.error ?? "Couldn't convert.");
+      }
+    },
+    [tasks, pushUndo, patchTask]
+  );
+
+  // Create a task directly in the backlog: name only, no dates, no bar
+  // anywhere. Every task still needs an epic, so backlog items attach to the
+  // last epic (the panel is disabled until one exists).
+  const createBacklogTask = useCallback(
+    async (name: string): Promise<{ ok: boolean }> => {
+      const lastEpic = [...tasks]
+        .filter((t) => t.kind === "category")
+        .sort((a, b) => a.order - b.order)
+        .pop();
+      if (!lastEpic) return { ok: false };
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: name.trim(),
+          kind: "task",
+          parentId: lastEpic.id,
+          startDate: null,
+          durationDays: 0,
+          scheduleStatus: "unscheduled",
+          status: "todo",
+          priority: "low",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
+        return { ok: true };
+      }
+      return { ok: false };
+    },
+    [projectId, tasks]
+  );
+
   const childCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of tasks) {
@@ -820,18 +1173,6 @@ export default function RoadmapTab({
     (parentId: string) => tasks.filter((t) => t.parentId === parentId),
     [tasks]
   );
-
-  // Category rollups (client-side computed)
-  const rollupsByCategory = useMemo(() => {
-    const m: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }> = {};
-    for (const t of tasks) {
-      if (t.kind === "category") {
-        const kids = tasks.filter((x) => x.parentId === t.id).map((x) => ({ ...x, isSubtask: false }));
-        m[t.id] = rollupChildren(kids);
-      }
-    }
-    return m;
-  }, [tasks]);
 
   // Map of every task id → TaskRow, for GanttGrid hidden-dependency lookups.
   const allTasksById = useMemo(() => {
@@ -874,12 +1215,14 @@ export default function RoadmapTab({
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
   const [inlineAddValue, setInlineAddValue] = useState("");
 
-  async function commitInlineAdd(parentId: string) {
+  // Enter commits and keeps the input open for bulk entry (matching the
+  // Gantt sidebar); blur commits and closes.
+  async function commitInlineAdd(parentId: string, keepOpen = false) {
     const name = inlineAddValue.trim();
     if (!name) { setInlineAddParentId(null); setInlineAddValue(""); return; }
-    await createChild(parentId, name);
-    setInlineAddParentId(null);
     setInlineAddValue("");
+    if (!keepOpen) setInlineAddParentId(null);
+    await createChild(parentId, name);
   }
 
   function renderListRow(task: TaskRow, depth: number) {
@@ -935,6 +1278,12 @@ export default function RoadmapTab({
             )}
           </Box>
           <StatusDot status={task.status} size={8} />
+          {task.kind === "milestone" && (
+            <Box
+              sx={{ width: 9, height: 9, transform: "rotate(45deg)", borderRadius: "1px", bgcolor: task.color ?? "#D99A20", flexShrink: 0 }}
+              title="Milestone"
+            />
+          )}
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Tooltip title={task.name} enterDelay={500}>
               <Typography
@@ -980,7 +1329,8 @@ export default function RoadmapTab({
           </Box>
           <Box sx={{ width: 70, flexShrink: 0, display: { xs: "none", md: "block" } }}>
             <Typography variant="caption" color="text.secondary">
-              {rollup && !rollup.startDate ? "—" : `${displayDurationDays}d`}
+              {/* Milestones are a point in time — duration is hidden everywhere. */}
+              {task.kind === "milestone" || (rollup && !rollup.startDate) ? "—" : `${displayDurationDays}d`}
             </Typography>
           </Box>
           <Box sx={{ width: 80, flexShrink: 0, display: { xs: "none", md: "flex" }, alignItems: "center", gap: 1 }}>
@@ -1025,7 +1375,7 @@ export default function RoadmapTab({
               value={inlineAddValue}
               onChange={(e) => setInlineAddValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(task.id); }
+                if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(task.id, true); }
                 if (e.key === "Escape") { setInlineAddParentId(null); setInlineAddValue(""); }
               }}
               onBlur={() => commitInlineAdd(task.id)}
@@ -1082,6 +1432,7 @@ export default function RoadmapTab({
           </Box>
 
           {view === "gantt" && !loading && (
+            <>
             <Box sx={{ display: "flex", height: 640, overflow: "hidden", borderRadius: 1 }}>
               <TaskSidebar
                 rows={rows}
@@ -1134,9 +1485,20 @@ export default function RoadmapTab({
                   onSelect={setSelectedId}
                   rollupsByCategory={rollupsByCategory}
                   allTasksById={allTasksById}
+                  onCreateMilestone={handleCreateMilestone}
+                  onScheduleFromBacklog={handleScheduleFromBacklog}
                 />
               </Box>
             </Box>
+            <BacklogPanel
+              items={backlogItems}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onSchedule={handleScheduleWithDefaults}
+              onCreate={createBacklogTask}
+              canCreate={tasks.some((t) => t.kind === "category")}
+            />
+            </>
           )}
 
           {loading && (
@@ -1215,6 +1577,8 @@ export default function RoadmapTab({
           onAddDependency={handleAddDependency}
           onRemoveDependency={handleRemoveDependency}
           onSelectSubtask={setSelectedId}
+          onConvertKind={handleConvertKind}
+          onMoveToBacklog={handleMoveToBacklog}
         />
       )}
 

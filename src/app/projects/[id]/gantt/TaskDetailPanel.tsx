@@ -57,6 +57,8 @@ export default function TaskDetailPanel({
   onAddDependency,
   onRemoveDependency,
   onSelectSubtask,
+  onConvertKind,
+  onMoveToBacklog,
 }: {
   row: TaskRow;
   members: MemberOption[];
@@ -69,6 +71,8 @@ export default function TaskDetailPanel({
   onAddDependency: (rowId: string, predecessorId: string) => Promise<void>;
   onRemoveDependency: (rowId: string, predecessorId: string) => void;
   onSelectSubtask: (id: string) => void;
+  onConvertKind?: (id: string, toKind: "task" | "milestone") => void;
+  onMoveToBacklog?: (id: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"details" | "pulse">("details");
   const [depSelection, setDepSelection] = useState("");
@@ -88,6 +92,9 @@ export default function TaskDetailPanel({
   const commentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isCategory = row.kind === "category";
+  const isMilestone = row.kind === "milestone";
+  const isEstimated = !isCategory && row.scheduleStatus === "estimated";
+  const isUnscheduled = !isCategory && row.scheduleStatus === "unscheduled";
   const isPlanned = !isCategory && !!row.startDate && row.durationDays > 0;
 
   const [draft, setDraft] = useState<TaskDraft>({
@@ -281,8 +288,43 @@ export default function TaskDetailPanel({
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Typography fontWeight={600} color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.5, fontSize: 12 }}>
-              {isCategory ? "Epic" : row.isSubtask ? "Subtask" : "Task"}
+              {isCategory ? "Epic" : isMilestone ? "Milestone" : row.isSubtask ? "Subtask" : "Task"}
             </Typography>
+            {isEstimated && (
+              <Box
+                component="span"
+                title="These dates are a system guess — drag the bar or edit the dates to confirm them"
+                sx={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "#496FE0",
+                  border: "1px dashed #496FE0",
+                  borderRadius: 999,
+                  px: 0.75,
+                  py: 0.1,
+                }}
+              >
+                ≈ estimated
+              </Box>
+            )}
+            {isUnscheduled && (
+              <Box
+                component="span"
+                title="This task is parked in the backlog with no dates"
+                sx={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "text.secondary",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 999,
+                  px: 0.75,
+                  py: 0.1,
+                }}
+              >
+                unscheduled
+              </Box>
+            )}
             <Typography component="span" sx={{ fontSize: 10, color: "text.disabled", fontFamily: "monospace", bgcolor: "rgba(0,0,0,0.04)", px: 0.5, py: 0.15, borderRadius: 0.5 }}>
               #{row.id.slice(-6)}
             </Typography>
@@ -386,11 +428,13 @@ export default function TaskDetailPanel({
               </Box>
             )}
 
-            {/* Start + Planned (not for categories) */}
+            {/* Start + Planned (not for categories). A milestone is a point in
+                time — it gets a single "Date" field ("done by end of this
+                day") and no duration anywhere. */}
             {!isCategory && (
-              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
+              <Box sx={{ display: "grid", gridTemplateColumns: isMilestone ? "1fr" : "1fr 1fr", gap: 1 }}>
                 <Box>
-                  <Typography sx={SECTION_LABEL_SX}>Start</Typography>
+                  <Typography sx={SECTION_LABEL_SX}>{isMilestone ? "Date (done by end of day)" : "Start"}</Typography>
                   <TextField
                     type="date"
                     size="small"
@@ -404,19 +448,21 @@ export default function TaskDetailPanel({
                     sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
                   />
                 </Box>
-                <Box>
-                  <Typography sx={SECTION_LABEL_SX}>Planned</Typography>
-                  <TextField
-                    type="number"
-                    size="small"
-                    fullWidth
-                    value={draft.durationDays > 0 ? draft.durationDays : ""}
-                    onChange={(e) => setDraft((dr) => ({ ...dr, durationDays: Math.max(0, Number(e.target.value)) }))}
-                    placeholder="—"
-                    inputProps={{ min: 0 }}
-                    sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
-                  />
-                </Box>
+                {!isMilestone && (
+                  <Box>
+                    <Typography sx={SECTION_LABEL_SX}>Planned</Typography>
+                    <TextField
+                      type="number"
+                      size="small"
+                      fullWidth
+                      value={draft.durationDays > 0 ? draft.durationDays : ""}
+                      onChange={(e) => setDraft((dr) => ({ ...dr, durationDays: Math.max(0, Number(e.target.value)) }))}
+                      placeholder="—"
+                      inputProps={{ min: 0 }}
+                      sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
+                    />
+                  </Box>
+                )}
               </Box>
             )}
 
@@ -569,6 +615,61 @@ export default function TaskDetailPanel({
                 </Typography>
               )}
             </Box>
+
+            {/* Scheduling / kind actions */}
+            {!isCategory && (onConvertKind || onMoveToBacklog) && (
+              <Box>
+                <Typography sx={SECTION_LABEL_SX}>Actions</Typography>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                  {onConvertKind && !isMilestone && (
+                    <span
+                      title={
+                        subtasks.length > 0
+                          ? "Milestones can't contain subtasks"
+                          : isUnscheduled
+                            ? "Schedule this task first — milestones always have a date"
+                            : "Collapses the bar into a diamond at its end date"
+                      }
+                    >
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={subtasks.length > 0 || isUnscheduled}
+                        onClick={() => onConvertKind(row.id, "milestone")}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Mark as milestone
+                      </Button>
+                    </span>
+                  )}
+                  {onConvertKind && isMilestone && (
+                    <span title="Expands the diamond into a 1-day bar ending on this date">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => onConvertKind(row.id, "task")}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Convert to task
+                      </Button>
+                    </span>
+                  )}
+                  {onMoveToBacklog && !isMilestone && !isUnscheduled && (
+                    <span title="Clears the dates and removes the bar — the task moves to the Unscheduled panel">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="inherit"
+                        onClick={() => onMoveToBacklog(row.id)}
+                        sx={{ textTransform: "none", color: "text.secondary" }}
+                      >
+                        Move to backlog
+                      </Button>
+                    </span>
+                  )}
+                </Box>
+              </Box>
+            )}
 
             {/* Children list */}
             {!row.isSubtask && (
