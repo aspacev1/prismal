@@ -489,7 +489,10 @@ export default function TaskSidebar({
                 alignItems: "center",
                 gap: 2,
                 px: 1.5,
-                py: 1,
+                // Fixed height (same as the epic-input state) so the Gantt can
+                // reserve a matching bottom spacer and both panes end up with
+                // the same scrollable height — see GanttGrid's footer spacer.
+                height: SUB_ROW_HEIGHT,
                 flexShrink: 0,
                 position: "sticky",
                 bottom: 0,

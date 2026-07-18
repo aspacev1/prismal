@@ -305,25 +305,24 @@ export default function RoadmapTab({
   // their scrollTop is mirrored here. The guard prevents the mirrored write
   // from echoing back into an infinite scroll loop.
   const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
-  // Names the pane whose *next* scroll event is an echo of a write we just
-  // made (not a new user gesture) and should be ignored. A time-based guard
-  // (e.g. "block for one animation frame") drops legitimate scroll events
-  // that arrive faster than the guard resets during a fast scroll gesture,
-  // which is exactly what caused the Gantt to visibly lag behind the sidebar
-  // and only "catch up" once scrolling stopped. This guard is cleared
-  // exactly once, by the specific echo event it predicts, so it never
-  // suppresses a real scroll delta.
-  const ignoreNextScrollOn = useRef<"sidebar" | "gantt" | null>(null);
+  // Echo suppression is value-based, not flag-based: the echo event our own
+  // mirrored write produces arrives with both panes already equal, so it
+  // no-ops on the equality check. A "skip the next event" flag breaks when
+  // the mirrored write clamps at the target's scroll limit — a clamped
+  // assignment fires no scroll event, the stale flag then swallows the next
+  // *real* scroll, and the panes drift apart.
   const syncScrollTop = useCallback((source: "sidebar" | "gantt") => {
-    if (ignoreNextScrollOn.current === source) {
-      ignoreNextScrollOn.current = null;
-      return;
-    }
     const from = source === "sidebar" ? sidebarScrollRef.current : scrollRef.current;
     const to = source === "sidebar" ? scrollRef.current : sidebarScrollRef.current;
     if (!from || !to) return;
-    ignoreNextScrollOn.current = source === "sidebar" ? "gantt" : "sidebar";
+    if (to.scrollTop === from.scrollTop) return;
     to.scrollTop = from.scrollTop;
+    // The two panes' max scrollTop can differ (the Gantt's horizontal
+    // scrollbar shortens its viewport; content heights are only kept equal
+    // best-effort). If the write clamped, pull the source back to the
+    // clamped value so the rows stay aligned instead of letting one pane
+    // keep scrolling past the other.
+    if (to.scrollTop !== from.scrollTop) from.scrollTop = to.scrollTop;
   }, []);
   // Guarded by a ref so it fires once per Gantt-view entry: `rangeStart` gets
   // a new identity every time tasks change, and re-running this after each

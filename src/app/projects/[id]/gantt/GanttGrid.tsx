@@ -868,6 +868,15 @@ export default function GanttGrid({
           );
         })}
       </Box>
+
+      {/* Bottom spacer matching the sidebar's sticky "+ Add an epic" footer.
+          The sidebar's scrollable content is its rows plus that footer; the
+          Gantt's is its (sticky) header plus the rows. The header and footer
+          areas must be the same height on both sides or the two panes get
+          different max scrollTop values, and mirrored scrolling clamps at the
+          bottom of a long list — rows visibly out of sync. Header: both panes
+          reserve HEADER_HEIGHT. Footer: this spacer mirrors SUB_ROW_HEIGHT. */}
+      <Box sx={{ height: SUB_ROW_HEIGHT }} />
     </Box>
   );
 }
