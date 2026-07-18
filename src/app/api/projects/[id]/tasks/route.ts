@@ -5,6 +5,7 @@ import { assertSameOrigin } from "@/lib/origin";
 import { requireMembership } from "@/lib/projectAuth";
 import { auth } from "@/auth";
 import { workEndDate } from "@/lib/dateUtils";
+import { resolveDefaultSchedule } from "@/lib/scheduleDefaults";
 
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   const session = await auth();
@@ -39,6 +40,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     name: t.name,
     description: t.description,
     kind: t.kind,
+    scheduleStatus: t.scheduleStatus,
     startDate: t.startDate ? t.startDate.toISOString() : null,
     durationDays: t.durationDays,
     originalEndDate: t.originalEndDate ? t.originalEndDate.toISOString() : null,
@@ -90,10 +92,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { parentId, assigneeId, startDate, durationDays, kind, ...rest } = parsed.data;
+  const { parentId, assigneeId, startDate, durationDays, kind, scheduleStatus, ...rest } = parsed.data;
 
+  let parent: { id: string; projectId: string; kind: string; parentId: string | null; startDate: Date | null; durationDays: number } | null = null;
   if (parentId) {
-    const parent = await prisma.task.findUnique({ where: { id: parentId } });
+    parent = await prisma.task.findUnique({ where: { id: parentId } });
     if (!parent || parent.projectId !== params.id) {
       return NextResponse.json({ error: "Parent task not found in this project." }, { status: 400 });
     }
@@ -135,9 +138,61 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
   }
 
-  const start = startDate ? new Date(startDate) : null;
-  const duration = durationDays ?? 0;
-  const originalEndDate = start && duration > 0 ? workEndDate(start, duration) : null;
+  // Resolve schedule + scheduleStatus. Categories never carry their own dates
+  // (rollups do); "unscheduled" tasks are deliberately dateless (backlog).
+  // A task with explicit dates is "confirmed" unless the caller says otherwise
+  // (API/import with real dates should not render as a ghost). A task created
+  // with only a name gets default dates ("estimated") so a bar always renders —
+  // start/end are never null on the chart.
+  let start: Date | null;
+  let duration: number;
+  let resolvedScheduleStatus: string;
+  if (kind === "category") {
+    start = startDate ? new Date(startDate) : null;
+    duration = durationDays ?? 0;
+    resolvedScheduleStatus = "confirmed";
+  } else if (scheduleStatus === "unscheduled") {
+    start = null;
+    duration = 0;
+    resolvedScheduleStatus = "unscheduled";
+  } else if (startDate) {
+    start = new Date(startDate);
+    duration = durationDays ?? 0;
+    resolvedScheduleStatus = scheduleStatus ?? "confirmed";
+  } else {
+    const siblings = parentId
+      ? await prisma.task.findMany({
+          where: { parentId },
+          select: { startDate: true, durationDays: true, order: true },
+        })
+      : [];
+    const project = await prisma.project.findUnique({
+      where: { id: params.id },
+      select: { startDate: true },
+    });
+    const parentIsTask = parent !== null && parent.kind === "task";
+    const resolved = resolveDefaultSchedule({
+      siblings,
+      parentStartDate: parentIsTask ? parent!.startDate : null,
+      parentEndDate:
+        parentIsTask && parent!.startDate && parent!.durationDays > 0
+          ? workEndDate(parent!.startDate, parent!.durationDays)
+          : null,
+      projectStartDate: project?.startDate ?? null,
+    });
+    start = resolved.startDate;
+    duration = durationDays && durationDays > 0 ? durationDays : resolved.durationDays;
+    resolvedScheduleStatus = scheduleStatus ?? "estimated";
+  }
+
+  // Estimated schedules carry no plan baseline — drift badges and the
+  // delay-confirmation flow only make sense once the user has confirmed dates.
+  // The baseline is set when the task is confirmed (see the PATCH handler).
+  const originalEndDate =
+    resolvedScheduleStatus === "confirmed" && start && duration > 0
+      ? workEndDate(start, duration)
+      : null;
+  const originalDuration = resolvedScheduleStatus === "confirmed" ? duration : 0;
 
   // Read the current max order and insert in one serializable transaction so two
   // concurrent creates can't both read the same max and collide on `order`.
@@ -152,10 +207,11 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         data: {
           ...rest,
           kind: kind ?? "task",
+          scheduleStatus: resolvedScheduleStatus,
           startDate: start,
           durationDays: duration,
           originalEndDate,
-          originalDurationDays: duration,
+          originalDurationDays: originalDuration,
           parentId: parentId || null,
           assigneeId: assigneeId || null,
           createdById: session.user.id,

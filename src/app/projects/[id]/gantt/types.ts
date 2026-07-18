@@ -11,6 +11,10 @@ export type AssigneePerson = {
 
 export type TaskKind = "category" | "task";
 
+// "estimated": dates guessed at creation (ghost bar, dashed). "confirmed":
+// user-chosen dates (solid bar). "unscheduled": parked in the backlog, no bar.
+export type ScheduleStatus = "estimated" | "confirmed" | "unscheduled";
+
 export type DepRef = { predecessorId: string };
 
 export type TaskRow = {
@@ -18,6 +22,7 @@ export type TaskRow = {
   name: string;
   description: string | null;
   kind: TaskKind;
+  scheduleStatus: ScheduleStatus;
   startDate: string | null;
   durationDays: number;
   originalEndDate: string | null;

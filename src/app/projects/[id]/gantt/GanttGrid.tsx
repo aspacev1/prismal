@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import Tooltip from "@mui/material/Tooltip";
 import {
   DAY_WIDTH,
   HEADER_HEIGHT,
@@ -40,6 +41,8 @@ export default function GanttGrid({
   rangeStart,
   totalDays,
   onDragEnd,
+  onDropToBacklog,
+  onBarDragActiveChange,
   selectedId,
   onSelect,
   rollupsByCategory,
@@ -57,6 +60,10 @@ export default function GanttGrid({
     originalStart: Date,
     originalDuration: number
   ) => void;
+  // Bar dropped onto the backlog panel ("[data-backlog-dropzone]") — the task
+  // should be unscheduled instead of moved.
+  onDropToBacklog?: (rowId: string) => void;
+  onBarDragActiveChange?: (active: boolean) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   rollupsByCategory: Record<string, { startDate: Date | null; endDate: Date | null; progress: number }>;
@@ -180,12 +187,23 @@ export default function GanttGrid({
         }
       };
 
-      const handleMouseUp = () => {
+      const handleMouseUp = (ev: MouseEvent) => {
         const drag = dragRef.current;
         dragRef.current = null;
         window.removeEventListener("mousemove", handleMouseMove);
         window.removeEventListener("mouseup", handleMouseUp);
+        onBarDragActiveChange?.(false);
         if (!drag) return;
+        // Releasing a moved bar over the backlog panel unschedules the task
+        // instead of committing a date change.
+        if (
+          drag.mode === "move" &&
+          document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-backlog-dropzone]")
+        ) {
+          setLiveOverride(null);
+          onDropToBacklog?.(drag.rowId);
+          return;
+        }
         setLiveOverride((current) => {
           if (current && current.rowId === drag.rowId) {
             onDragEnd(
@@ -203,8 +221,9 @@ export default function GanttGrid({
 
       window.addEventListener("mousemove", handleMouseMove);
       window.addEventListener("mouseup", handleMouseUp);
+      onBarDragActiveChange?.(true);
     },
-    [onDragEnd]
+    [onDragEnd, onDropToBacklog, onBarDragActiveChange]
   );
 
   const todayOffset = daysBetween(rangeStart, today);
@@ -487,6 +506,11 @@ export default function GanttGrid({
           const barOpacity = isStatus(row.status) ? STATUS_BAR_OPACITY[row.status] : STATUS_BAR_OPACITY.todo;
           const barGradient = `linear-gradient(135deg, rgba(45,110,239,${barOpacity}) 0%, rgba(15,169,192,${barOpacity}) 100%)`;
           const isExceptionStatus = isStatus(row.status) && EXCEPTION_STATUSES.includes(row.status);
+          // Ghost (estimated) bars: a fixed muted tint + dashed border so the
+          // dashes — not color alone — carry the "system-guessed dates" signal.
+          const isEstimated = !isCategory && row.scheduleStatus === "estimated";
+          const estimatedGradient =
+            "linear-gradient(135deg, rgba(45,110,239,0.18) 0%, rgba(15,169,192,0.18) 100%)";
 
           // Task-only computed values (not used for categories)
           const taskStart = !isCategory && row.startDate ? new Date(row.startDate) : null;
@@ -653,25 +677,29 @@ export default function GanttGrid({
                     height: barHeight,
                     borderRadius: 0.5,
                     cursor: "grab",
-                    background: barGradient,
+                    background: isEstimated ? estimatedGradient : barGradient,
                     // A constant-opacity border (independent of the status-driven
                     // fill opacity above) so low-opacity bars (todo, archived)
                     // still have a visible edge for locating start/end and the
                     // drag-resize affordance — the fill alone can be nearly
                     // invisible at 0.15-0.25 opacity (per code review).
-                    border: "1px solid rgba(45,110,239,0.3)",
+                    border: isEstimated
+                      ? "1.5px dashed rgba(45,110,239,0.75)"
+                      : "1px solid rgba(45,110,239,0.3)",
                     outline: overBudget ? "2px solid #DC2F4E" : "none",
                     outlineOffset: overBudget ? "1px" : "0",
                     display: "flex",
                     alignItems: "center",
                     overflow: "hidden",
                     zIndex: 20,
-                    transition: "box-shadow 0.15s",
+                    // The estimated → confirmed switch fades in the solid fill
+                    // (the dashed→solid border flip itself can't animate).
+                    transition: "box-shadow 0.15s, background 150ms ease, border-color 150ms ease",
                     boxShadow: isSelected ? "0 0 0 2px rgba(79,93,255,0.4)" : "none",
                     "&:active": { cursor: "grabbing" },
                     "&:hover .resize-handle": { opacity: 1 },
                   }}
-                  title={`${row.name} — ${status.label}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
+                  title={`${row.name} — ${status.label}${isEstimated ? " — dates estimated, drag to schedule" : ""}${overBudget ? ` — over budget: ${row.loggedHours}h vs ${row.durationDays * 8}h plan` : ""}${ahead ? " — ahead of plan" : ""}${extended ? " — extended past original plan" : ""}${shifted ? " — shifted from original plan" : ""}`}
                 >
                   {isExceptionStatus && (
                     <Box sx={{ position: "absolute", left: 2, top: "50%", transform: "translateY(-50%)", zIndex: 25 }}>
@@ -680,8 +708,10 @@ export default function GanttGrid({
                   )}
                 {/* Worked-so-far fill — a distinct signal (hours logged vs. planned)
                     from the status-opacity gradient above, so it stays flat brand
-                    blue rather than picking up the status color. */}
-                {filledWidthPx > 0 && (
+                    blue rather than picking up the status color. Suppressed on
+                    estimated bars: guessed dates carry no "worked" meaning and
+                    the solid fill would defeat the ghost styling. */}
+                {!isEstimated && filledWidthPx > 0 && (
                   <Box
                     sx={{
                       position: "absolute",
@@ -841,6 +871,38 @@ export default function GanttGrid({
                   }}
                 />
                 </Box>
+              )}
+
+              {/* Estimated indicator — the drift badges' visual language at the
+                  bar's left edge, rendered as a sibling (the bar clips its
+                  overflow). Estimated bars never carry drift badges (no plan
+                  baseline yet), so the slot is free. */}
+              {isEstimated && row.startDate && row.durationDays > 0 && (
+                <Tooltip title="Dates estimated — drag to schedule" arrow placement="top">
+                  <Box
+                    sx={{
+                      position: "absolute",
+                      top: "50%",
+                      transform: "translateY(-150%)",
+                      left: barLeft - 7,
+                      width: 14,
+                      height: 14,
+                      borderRadius: "50%",
+                      bgcolor: "#61779B",
+                      border: "2px solid #fff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 30,
+                      color: "#fff",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ≈
+                  </Box>
+                </Tooltip>
               )}
 
               {/* Unplanned task placeholder (no start date or duration 0) */}

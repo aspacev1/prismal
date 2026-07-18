@@ -29,22 +29,36 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import ViewListIcon from "@mui/icons-material/ViewList";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import {
+  DndContext,
+  PointerSensor,
+  pointerWithin,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
 import TaskSidebar from "./gantt/TaskSidebar";
 import GanttGrid from "./gantt/GanttGrid";
 import TaskDetailPanel from "./gantt/TaskDetailPanel";
+import BacklogPanel, { type BacklogItem } from "./gantt/BacklogPanel";
 import ScheduleChangeDialog, { type ScheduleChangeData } from "./gantt/ScheduleChangeDialog";
 import {
   STATUSES,
   isStatus,
   type TaskStatus,
   DAY_WIDTH,
+  HEADER_HEIGHT,
+  ROW_HEIGHT,
+  SUB_ROW_HEIGHT,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
 } from "./gantt/constants";
 import { StatusDot } from "./gantt/shared";
 import { rollupChildren } from "./gantt/rollups";
-import type { TaskRow, MemberOption, TaskKind, TaskDraft } from "./gantt/types";
+import type { TaskRow, MemberOption, TaskKind, TaskDraft, ScheduleStatus } from "./gantt/types";
 import {
   addDays,
   daysBetween,
@@ -52,12 +66,14 @@ import {
   workEndDate,
   getToday,
 } from "@/lib/dateUtils";
+import { resolveDefaultSchedule, nextWorkingDay, DEFAULT_TASK_DURATION_DAYS } from "@/lib/scheduleDefaults";
 
 type ApiTask = {
   id: string;
   name: string;
   description: string | null;
   kind: TaskKind;
+  scheduleStatus: ScheduleStatus;
   startDate: string | null;
   durationDays: number;
   originalEndDate: string | null;
@@ -103,6 +119,50 @@ function toApiTask(t: CreatedApiTask): ApiTask {
 
 type PendingScheduleChange = ScheduleChangeData | null;
 
+// Snapshot of a task's schedule before a change, for the lightweight undo
+// stack (Ctrl/Cmd+Z). Covers the ghost-bar flows: confirming an estimated
+// schedule by drag, and moves in/out of the backlog.
+type ScheduleSnapshot = {
+  startDate: string | null;
+  durationDays: number;
+  scheduleStatus: ScheduleStatus;
+};
+
+const TIMELINE_DROPZONE_ID = "timeline-dropzone";
+
+// The Gantt scroll container doubles as the drop target for backlog items
+// dragged onto the timeline. useDroppable must live under the DndContext that
+// owns the backlog drag, hence this thin wrapper around the scroller Box.
+function TimelineDropZone({
+  scrollElRef,
+  onScroll,
+  children,
+}: {
+  scrollElRef: React.MutableRefObject<HTMLDivElement | null>;
+  onScroll: () => void;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: TIMELINE_DROPZONE_ID });
+  return (
+    <Box
+      ref={(el: HTMLDivElement | null) => {
+        setNodeRef(el);
+        scrollElRef.current = el;
+      }}
+      onScroll={onScroll}
+      sx={{
+        flex: 1,
+        overflowX: "auto",
+        overflowY: "auto",
+        outline: isOver ? "2px dashed #2D6EEF" : "none",
+        outlineOffset: -2,
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 export default function RoadmapTab({
   projectId,
   projectName,
@@ -131,6 +191,15 @@ export default function RoadmapTab({
   // Transient error banner for actions that otherwise fail silently (rejected
   // drag, failed schedule-change save).
   const [actionError, setActionError] = useState<string | null>(null);
+  // Backlog ("Unscheduled") lane state. Collapsed by default; auto-opened once
+  // if unscheduled tasks exist, and whenever a task is parked there so it
+  // doesn't look like the task vanished.
+  const [backlogOpen, setBacklogOpen] = useState(false);
+  // True while a Gantt bar is being dragged — highlights the backlog drop zone.
+  const [barDragActive, setBarDragActive] = useState(false);
+  // Backlog move awaiting confirmation because the task has dependencies
+  // (moving to the backlog removes them).
+  const [pendingBacklogMove, setPendingBacklogMove] = useState<ApiTask | null>(null);
 
   // Resizable / collapsible sidebar state
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -250,16 +319,19 @@ export default function RoadmapTab({
 
   // Build flat rows: Category → Task → Subtask (expanded).
   // Sort each level by `order` so optimistic reorder updates are reflected immediately.
+  // Unscheduled tasks are excluded — they live in the backlog panel only, so
+  // the chart never shows a task row without a bar.
   const rows: TaskRow[] = useMemo(() => {
-    const topLevel = effectiveTasks.filter((t) => !t.parentId).sort((a, b) => a.order - b.order);
+    const chartTasks = effectiveTasks.filter((t) => t.scheduleStatus !== "unscheduled");
+    const topLevel = chartTasks.filter((t) => !t.parentId).sort((a, b) => a.order - b.order);
     const out: TaskRow[] = [];
     for (const t of topLevel) {
-      const children = effectiveTasks.filter((x) => x.parentId === t.id).sort((a, b) => a.order - b.order);
+      const children = chartTasks.filter((x) => x.parentId === t.id).sort((a, b) => a.order - b.order);
       out.push({ ...t, isSubtask: false });
       if (expanded.has(t.id)) {
         for (const c of children) {
           out.push({ ...c, isSubtask: false });
-          const grandChildren = effectiveTasks.filter((x) => x.parentId === c.id).sort((a, b) => a.order - b.order);
+          const grandChildren = chartTasks.filter((x) => x.parentId === c.id).sort((a, b) => a.order - b.order);
           if (expanded.has(c.id)) {
             for (const g of grandChildren) out.push({ ...g, isSubtask: true });
           }
@@ -293,6 +365,53 @@ export default function RoadmapTab({
     const days = Math.max(daysBetween(start, end), 28);
     return { rangeStart: start, totalDays: days };
   }, [projectStartDate, tasks]);
+
+  // Latest values for callbacks that fire after awaits or debounce timers
+  // (optimistic creation, scroll-into-view, backlog drops) — plain closures
+  // over `tasks`/`rows`/`rangeStart` would go stale across those gaps.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const rangeStartRef = useRef(rangeStart);
+  rangeStartRef.current = rangeStart;
+
+  // Tasks parked in the backlog, in their manual (drag) order.
+  const unscheduledTasks = useMemo(
+    () =>
+      tasks
+        .filter((t) => t.kind === "task" && t.scheduleStatus === "unscheduled")
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)),
+    [tasks]
+  );
+  const backlogItems: BacklogItem[] = useMemo(
+    () =>
+      unscheduledTasks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        priority: t.priority,
+        parentLabel: tasks.find((p) => p.id === t.parentId)?.name ?? "",
+      })),
+    [unscheduledTasks, tasks]
+  );
+  const epicOptions = useMemo(
+    () =>
+      tasks
+        .filter((t) => t.kind === "category")
+        .sort((a, b) => a.order - b.order)
+        .map((t) => ({ id: t.id, name: t.name })),
+    [tasks]
+  );
+
+  // Open the backlog lane once if the project loads with unscheduled tasks
+  // ("collapsed by default when empty"); afterwards the user's toggle wins.
+  const didAutoOpenBacklog = useRef(false);
+  useEffect(() => {
+    if (didAutoOpenBacklog.current || unscheduledTasks.length === 0) return;
+    didAutoOpenBacklog.current = true;
+    setBacklogOpen(true);
+  }, [unscheduledTasks]);
 
   // Auto-scroll the Gantt so "today" is visible ~1 week from the left edge
   // on initial load (or when switching to the Gantt view). This prevents the
@@ -363,6 +482,87 @@ export default function RoadmapTab({
     setExpanded(saved);
   }
 
+  // Optimistically created tasks get a temporary id so their ghost bar renders
+  // before the POST returns; any later action on that id (drag, delete, undo)
+  // resolves through the pending create first. Entries are kept after
+  // resolution — the map doubles as the temp→real id lookup.
+  const pendingCreatesRef = useRef<Map<string, Promise<string | null>>>(new Map());
+  const tempIdSeq = useRef(0);
+  const resolveTaskId = useCallback(async (id: string): Promise<string> => {
+    const pending = pendingCreatesRef.current.get(id);
+    if (!pending) return id;
+    return (await pending) ?? id;
+  }, []);
+
+  // Scroll the viewport so a newly created bar is visible: horizontally into
+  // the left third if off-screen, vertically so the row shows. Debounced so
+  // rapid keyboard entry scrolls once, to the latest bar, instead of jumping
+  // on every Enter.
+  const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollTargetRef = useRef<{ start: Date; taskId: string; parentId: string | null } | null>(null);
+  const requestScrollToBar = useCallback((start: Date, taskId: string, parentId: string | null) => {
+    scrollTargetRef.current = { start, taskId, parentId };
+    if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
+    scrollDebounceRef.current = setTimeout(() => {
+      scrollDebounceRef.current = null;
+      const target = scrollTargetRef.current;
+      scrollTargetRef.current = null;
+      const el = scrollRef.current;
+      if (!target || !el) return;
+
+      let left: number | undefined;
+      const barLeftPx = daysBetween(rangeStartRef.current, target.start) * DAY_WIDTH;
+      if (barLeftPx < el.scrollLeft || barLeftPx + DAY_WIDTH > el.scrollLeft + el.clientWidth) {
+        left = Math.max(barLeftPx - el.clientWidth / 3, 0);
+      }
+
+      let top: number | undefined;
+      const currentRows = rowsRef.current;
+      // The temp id may have been swapped for the server id by now — fall back
+      // to the last row under the same parent (new tasks append at the end).
+      let idx = currentRows.findIndex((r) => r.id === target.taskId);
+      if (idx === -1 && target.parentId) {
+        for (let i = currentRows.length - 1; i >= 0; i--) {
+          if (currentRows[i].parentId === target.parentId) {
+            idx = i;
+            break;
+          }
+        }
+      }
+      if (idx !== -1) {
+        let y = HEADER_HEIGHT;
+        for (let i = 0; i < idx; i++) y += currentRows[i].isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT;
+        const h = currentRows[idx].isSubtask ? SUB_ROW_HEIGHT : ROW_HEIGHT;
+        // The sticky header overlays the top of the viewport, so a row is only
+        // visible between scrollTop + HEADER_HEIGHT and scrollTop + clientHeight.
+        if (y < el.scrollTop + HEADER_HEIGHT || y + h > el.scrollTop + el.clientHeight) {
+          top = Math.max(y - HEADER_HEIGHT, 0);
+        }
+      }
+
+      if (left !== undefined || top !== undefined) {
+        el.scrollTo({ left, top, behavior: "smooth" });
+      }
+    }, 800);
+  }, []);
+  useEffect(
+    () => () => {
+      if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current);
+    },
+    []
+  );
+
+  // Lightweight schedule undo (Ctrl/Cmd+Z): drag-confirm of a ghost bar and
+  // backlog moves in either direction. Reverts dates AND scheduleStatus (the
+  // server also drops/restores the plan baseline on those transitions).
+  // Dependencies removed by a backlog move are not restored — see the
+  // confirmation dialog.
+  const undoStackRef = useRef<{ taskId: string; before: ScheduleSnapshot }[]>([]);
+  const pushUndo = useCallback((taskId: string, before: ScheduleSnapshot) => {
+    undoStackRef.current.push({ taskId, before });
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+  }, []);
+
   // PATCH a task; returns { ok } or { needsConfirm, body }
   const patchTask = useCallback(
     async (
@@ -377,6 +577,7 @@ export default function RoadmapTab({
         status?: string;
         priority?: string;
         assigneeId?: string | null;
+        scheduleStatus?: ScheduleStatus;
       },
       confirmedDelay = false,
       reason?: string
@@ -389,7 +590,10 @@ export default function RoadmapTab({
       body?: { originalEndDate: string; newEndDate: string };
     }> => {
       try {
-        const res = await fetch(`/api/projects/${projectId}/tasks/${rowId}`, {
+        // A drag/edit can land on an optimistically created task before its
+        // POST returns — wait for the real id.
+        const taskId = await resolveTaskId(rowId);
+        const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
@@ -398,7 +602,7 @@ export default function RoadmapTab({
         if (res.ok) {
           const data = await res.json();
           setTasks((prev) =>
-            prev.map((t) => (t.id === rowId ? { ...t, ...data.task, deps: t.deps } : t))
+            prev.map((t) => (t.id === taskId ? { ...t, ...data.task, deps: t.deps } : t))
           );
           return { ok: true };
         }
@@ -421,8 +625,49 @@ export default function RoadmapTab({
         return { ok: false, error: "Network error. Please try again." };
       }
     },
-    [projectId]
+    [projectId, resolveTaskId]
   );
+
+  const undoLastScheduleChange = useCallback(async () => {
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    const { taskId, before } = entry;
+    const result =
+      before.scheduleStatus === "unscheduled"
+        ? await patchTask(taskId, { scheduleStatus: "unscheduled" })
+        : await patchTask(taskId, {
+            startDate: before.startDate ?? undefined,
+            durationDays: before.durationDays,
+            scheduleStatus: before.scheduleStatus,
+          });
+    if (!result.ok) {
+      setActionError(result.error ?? "Couldn't undo the last schedule change.");
+      fetchTasks();
+    } else if (before.scheduleStatus === "unscheduled") {
+      setBacklogOpen(true);
+    }
+  }, [patchTask, fetchTasks]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "z" || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return; // let text fields keep their native undo
+      }
+      if (undoStackRef.current.length === 0) return;
+      e.preventDefault();
+      void undoLastScheduleChange();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undoLastScheduleChange]);
 
   // Open the schedule-change dialog with delay + reason context.
   // Computes newEndDate locally so the dialog can render before any API call
@@ -451,18 +696,32 @@ export default function RoadmapTab({
     });
   }
 
-  // Drag end from GanttGrid
+  // Drag end from GanttGrid. Dropping a ghost (estimated) bar is THE
+  // scheduling gesture: it confirms the dates in the same PATCH — no dialog,
+  // no reason — and registers an undo entry back to the estimated state.
   const handleDragEnd = useCallback(
     async (
       rowId: string,
       _isSubtask: boolean,
       finalStart: Date,
       finalDuration: number,
-      _originalStart: Date,
-      _originalDuration: number
+      originalStart: Date,
+      originalDuration: number
     ) => {
-      const patch = { startDate: finalStart.toISOString(), durationDays: finalDuration };
+      const wasEstimated = rows.find((r) => r.id === rowId)?.scheduleStatus === "estimated";
+      const patch: Parameters<typeof patchTask>[1] = {
+        startDate: finalStart.toISOString(),
+        durationDays: finalDuration,
+      };
+      if (wasEstimated) patch.scheduleStatus = "confirmed";
       const result = await patchTask(rowId, patch);
+      if (result.ok && wasEstimated) {
+        pushUndo(rowId, {
+          startDate: originalStart.toISOString(),
+          durationDays: originalDuration,
+          scheduleStatus: "estimated",
+        });
+      }
       if (result.needsConfirm && result.body) {
         openScheduleDialog(rowId, patch, true, result.body);
       } else if (result.needsReason) {
@@ -473,7 +732,7 @@ export default function RoadmapTab({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, patchTask]
+    [rows, patchTask, pushUndo]
   );
 
   // Detail panel schedule edits (start date / duration) — must go via dialog
@@ -681,7 +940,8 @@ export default function RoadmapTab({
       setDeleting(true);
       setDeleteError(null);
       try {
-        const res = await fetch(`/api/projects/${projectId}/tasks/${rowId}`, {
+        const taskId = await resolveTaskId(rowId);
+        const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
           method: "DELETE",
           credentials: "same-origin",
         });
@@ -690,7 +950,7 @@ export default function RoadmapTab({
           setDeleteError(body.error ?? "Failed to delete.");
           return false;
         }
-        setSelectedId((cur) => (cur === rowId ? null : cur));
+        setSelectedId((cur) => (cur === rowId || cur === taskId ? null : cur));
         fetchTasks();
         return true;
       } catch {
@@ -700,7 +960,7 @@ export default function RoadmapTab({
         setDeleting(false);
       }
     },
-    [projectId, fetchTasks]
+    [projectId, fetchTasks, resolveTaskId]
   );
 
   // Open the delete confirmation for a row. Deleting a category cascades to all
@@ -750,38 +1010,103 @@ export default function RoadmapTab({
   // Create a child (Task under a Category, or Subtask under a Task).
   // Used by the hover-"+" inline add. The parent's kind determines the
   // semantic level of the new row but the API just needs parentId + kind=task.
+  //
+  // The task gets a default schedule (sibling cascade → parent window → today,
+  // see resolveDefaultSchedule) marked "estimated", and is inserted
+  // optimistically under a temp id so its ghost bar appears instantly — the
+  // server row replaces it when the POST returns. The bar is immediately
+  // interactive: actions on the temp id resolve through pendingCreatesRef.
   const createChild = useCallback(
     async (parentId: string, name: string): Promise<{ ok: boolean }> => {
       const firstMember = members[0];
+      const current = tasksRef.current;
+      const parent = current.find((t) => t.id === parentId);
+      const parentIsTask = parent?.kind === "task";
+      const resolved = resolveDefaultSchedule({
+        siblings: current
+          .filter((t) => t.parentId === parentId && t.scheduleStatus !== "unscheduled")
+          .map((t) => ({ startDate: t.startDate, durationDays: t.durationDays, order: t.order })),
+        parentStartDate: parentIsTask ? parent!.startDate : null,
+        parentEndDate:
+          parentIsTask && parent!.startDate && parent!.durationDays > 0
+            ? workEndDate(new Date(parent!.startDate), parent!.durationDays)
+            : null,
+        projectStartDate,
+      });
+      const startIso = resolved.startDate.toISOString();
       const body = {
         name: name.trim(),
         kind: "task" as const,
-        startDate: getToday().toISOString(),
-        durationDays: 0,
+        scheduleStatus: "estimated" as const,
+        startDate: startIso,
+        durationDays: resolved.durationDays,
         status: "todo" as const,
         priority: "low" as const,
         parentId,
         assigneeId: firstMember?.id ?? null,
       };
-      const res = await fetch(`/api/projects/${projectId}/tasks`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
+
+      const tempId = `temp-task-${++tempIdSeq.current}`;
+      const optimistic: ApiTask = {
+        id: tempId,
+        name: body.name,
+        description: null,
+        kind: "task",
+        scheduleStatus: "estimated",
+        startDate: startIso,
+        durationDays: resolved.durationDays,
+        originalEndDate: null,
+        originalDurationDays: 0,
+        loggedHours: 0,
+        progress: 0,
+        status: "todo",
+        priority: "low",
+        order: current.reduce((m, t) => Math.max(m, t.order), -1) + 1,
+        color: null,
+        projectId,
+        parentId,
+        assigneeId: firstMember?.id ?? null,
+        assignee: null,
+        deps: [],
+        successorDeps: [],
+      };
+
+      const createPromise = (async (): Promise<CreatedApiTask | null> => {
+        try {
+          const res = await fetch(`/api/projects/${projectId}/tasks`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) return null;
+          const data = await res.json();
+          return data.task as CreatedApiTask;
+        } catch {
+          return null;
+        }
+      })();
+      pendingCreatesRef.current.set(tempId, createPromise.then((t) => t?.id ?? null));
+
+      setTasks((prev) => [...prev, optimistic]);
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.add(parentId);
+        return next;
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTasks((prev) => [...prev, toApiTask(data.task)]);
-        setExpanded((prev) => {
-          const next = new Set(prev);
-          next.add(parentId);
-          return next;
-        });
-        return { ok: true };
+      requestScrollToBar(resolved.startDate, tempId, parentId);
+
+      const created = await createPromise;
+      if (!created) {
+        setTasks((prev) => prev.filter((t) => t.id !== tempId));
+        setActionError("Couldn't create the task. Please try again.");
+        return { ok: false };
       }
-      return { ok: false };
+      setTasks((prev) => prev.map((t) => (t.id === tempId ? toApiTask(created) : t)));
+      setSelectedId((cur) => (cur === tempId ? created.id : cur));
+      return { ok: true };
     },
-    [projectId, members]
+    [projectId, members, projectStartDate, requestScrollToBar]
   );
 
   const createEpic = useCallback(
@@ -806,10 +1131,188 @@ export default function RoadmapTab({
     [projectId]
   );
 
+  // Create a task directly in the backlog: name only, no dates, no bar.
+  const createBacklogTask = useCallback(
+    async (name: string, parentId: string) => {
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: name.trim(),
+          kind: "task",
+          scheduleStatus: "unscheduled",
+          status: "todo",
+          priority: "low",
+          parentId,
+          assigneeId: members[0]?.id ?? null,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
+      } else {
+        setActionError("Couldn't create the task. Please try again.");
+      }
+    },
+    [projectId, members]
+  );
+
+  const performBacklogMove = useCallback(
+    async (task: ApiTask) => {
+      const before: ScheduleSnapshot = {
+        startDate: task.startDate,
+        durationDays: task.durationDays,
+        scheduleStatus: task.scheduleStatus,
+      };
+      const result = await patchTask(task.id, { scheduleStatus: "unscheduled" });
+      if (result.ok) {
+        pushUndo(task.id, before);
+        setBacklogOpen(true);
+        // The server also removed dependencies through this task — refetch so
+        // other rows' dep arrows disappear too.
+        fetchTasks();
+      } else {
+        setActionError(result.error ?? "Couldn't move the task to the backlog.");
+      }
+    },
+    [patchTask, pushUndo, fetchTasks]
+  );
+
+  // Park a task in the backlog: clears its dates (and, after confirmation,
+  // its dependencies). Tasks with subtasks stay on the chart — their children
+  // would otherwise become unreachable rows.
+  const moveToBacklog = useCallback(
+    (rowId: string) => {
+      const task = tasksRef.current.find((t) => t.id === rowId);
+      if (!task || task.kind !== "task" || task.scheduleStatus === "unscheduled") return;
+      if (tasksRef.current.some((t) => t.parentId === rowId)) {
+        setActionError("A task with subtasks can't move to the backlog — move or delete its subtasks first.");
+        return;
+      }
+      const hasDeps = (task.deps?.length ?? 0) > 0 || (task.successorDeps?.length ?? 0) > 0;
+      if (hasDeps) {
+        setPendingBacklogMove(task);
+        return;
+      }
+      void performBacklogMove(task);
+    },
+    [performBacklogMove]
+  );
+
+  // "Schedule" button on a backlog item: apply the Phase-1 default logic —
+  // the task returns to the chart as an estimated ghost bar.
+  const scheduleFromBacklog = useCallback(
+    async (taskId: string) => {
+      const current = tasksRef.current;
+      const task = current.find((t) => t.id === taskId);
+      if (!task || !task.parentId) return;
+      const parent = current.find((t) => t.id === task.parentId);
+      const parentIsTask = parent?.kind === "task";
+      const resolved = resolveDefaultSchedule({
+        siblings: current
+          .filter((t) => t.parentId === task.parentId && t.id !== taskId && t.scheduleStatus !== "unscheduled")
+          .map((t) => ({ startDate: t.startDate, durationDays: t.durationDays, order: t.order })),
+        parentStartDate: parentIsTask ? parent!.startDate : null,
+        parentEndDate:
+          parentIsTask && parent!.startDate && parent!.durationDays > 0
+            ? workEndDate(new Date(parent!.startDate), parent!.durationDays)
+            : null,
+        projectStartDate,
+      });
+      const before: ScheduleSnapshot = { startDate: null, durationDays: 0, scheduleStatus: "unscheduled" };
+      const result = await patchTask(taskId, {
+        startDate: resolved.startDate.toISOString(),
+        durationDays: resolved.durationDays,
+        scheduleStatus: "estimated",
+      });
+      if (result.ok) {
+        pushUndo(taskId, before);
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          next.add(task.parentId!);
+          return next;
+        });
+        requestScrollToBar(resolved.startDate, taskId, task.parentId);
+      } else {
+        setActionError(result.error ?? "Couldn't schedule the task.");
+      }
+    },
+    [patchTask, pushUndo, projectStartDate, requestScrollToBar]
+  );
+
+  // Backlog item dropped on the timeline: the user chose the date, so the
+  // task is scheduled *confirmed* (solid bar) at the drop position, snapped
+  // forward to a working day, with the default 1-day duration.
+  const scheduleBacklogTaskAtDate = useCallback(
+    async (taskId: string, date: Date) => {
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      if (!task || !task.parentId) return;
+      const start = nextWorkingDay(date);
+      const before: ScheduleSnapshot = { startDate: null, durationDays: 0, scheduleStatus: "unscheduled" };
+      const result = await patchTask(taskId, {
+        startDate: start.toISOString(),
+        durationDays: DEFAULT_TASK_DURATION_DAYS,
+        scheduleStatus: "confirmed",
+      });
+      if (result.ok) {
+        pushUndo(taskId, before);
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          next.add(task.parentId!);
+          return next;
+        });
+      } else {
+        setActionError(result.error ?? "Couldn't schedule the task.");
+      }
+    },
+    [patchTask, pushUndo]
+  );
+
+  // DndContext handler for backlog drags: drop on the timeline schedules at
+  // the hovered date; drop on another backlog item reorders the lane.
+  const backlogSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleBacklogDndEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over, activatorEvent, delta } = event;
+      if (!over) return;
+      const activeId = String(active.id);
+
+      if (over.id === TIMELINE_DROPZONE_ID) {
+        const el = scrollRef.current;
+        const pointer = activatorEvent as PointerEvent;
+        if (!el || typeof pointer.clientX !== "number") return;
+        const clientX = pointer.clientX + delta.x;
+        const rect = el.getBoundingClientRect();
+        const dayIdx = Math.floor((clientX - rect.left + el.scrollLeft) / DAY_WIDTH);
+        const date = addDays(rangeStartRef.current, Math.max(dayIdx, 0));
+        void scheduleBacklogTaskAtDate(activeId, date);
+        return;
+      }
+
+      const overId = String(over.id);
+      if (overId === activeId) return;
+      const list = tasksRef.current
+        .filter((t) => t.kind === "task" && t.scheduleStatus === "unscheduled")
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+      const oldIndex = list.findIndex((t) => t.id === activeId);
+      const newIndex = list.findIndex((t) => t.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      // Renumber the backlog 0..n-1 in the new arrangement. `order` is only a
+      // sort key, so this is always representable; when an item is scheduled
+      // back out it simply sorts among its siblings by that number.
+      const moved = arrayMove(list, oldIndex, newIndex);
+      handleReorder(moved.map((t, idx) => ({ id: t.id, order: idx })));
+    },
+    [scheduleBacklogTaskAtDate, handleReorder]
+  );
+
+  // Children visible on the chart — unscheduled tasks live in the backlog
+  // panel, so they don't count toward the sidebar badges/expand arrows.
   const childCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of tasks) {
-      if (t.parentId) {
+      if (t.parentId && t.scheduleStatus !== "unscheduled") {
         counts[t.parentId] = (counts[t.parentId] ?? 0) + 1;
       }
     }
@@ -874,12 +1377,15 @@ export default function RoadmapTab({
   const [inlineAddParentId, setInlineAddParentId] = useState<string | null>(null);
   const [inlineAddValue, setInlineAddValue] = useState("");
 
-  async function commitInlineAdd(parentId: string) {
+  // keepOpen (Enter) leaves the input in place for the next name — see the
+  // matching keyboard-first flow in TaskSidebar. createChild inserts
+  // optimistically, so there's nothing to await before clearing.
+  function commitInlineAdd(parentId: string, keepOpen = false) {
     const name = inlineAddValue.trim();
     if (!name) { setInlineAddParentId(null); setInlineAddValue(""); return; }
-    await createChild(parentId, name);
-    setInlineAddParentId(null);
+    void createChild(parentId, name);
     setInlineAddValue("");
+    if (!keepOpen) setInlineAddParentId(null);
   }
 
   function renderListRow(task: TaskRow, depth: number) {
@@ -1025,7 +1531,7 @@ export default function RoadmapTab({
               value={inlineAddValue}
               onChange={(e) => setInlineAddValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(task.id); }
+                if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(task.id, true); }
                 if (e.key === "Escape") { setInlineAddParentId(null); setInlineAddValue(""); }
               }}
               onBlur={() => commitInlineAdd(task.id)}
@@ -1082,7 +1588,13 @@ export default function RoadmapTab({
           </Box>
 
           {view === "gantt" && !loading && (
-            <Box sx={{ display: "flex", height: 640, overflow: "hidden", borderRadius: 1 }}>
+            <DndContext
+              sensors={backlogSensors}
+              collisionDetection={pointerWithin}
+              onDragEnd={handleBacklogDndEnd}
+            >
+            <Box sx={{ display: "flex", flexDirection: "column", height: 640, overflow: "hidden", borderRadius: 1 }}>
+            <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
               <TaskSidebar
                 rows={rows}
                 members={members}
@@ -1119,24 +1631,33 @@ export default function RoadmapTab({
                   "&:active": { bgcolor: "primary.dark" },
                 }}
               />
-              <Box
-                ref={scrollRef}
-                onScroll={() => syncScrollTop("gantt")}
-                sx={{ flex: 1, overflowX: "auto", overflowY: "auto" }}
-              >
+              <TimelineDropZone scrollElRef={scrollRef} onScroll={() => syncScrollTop("gantt")}>
                 <GanttGrid
                   rows={rows}
                   members={members}
                   rangeStart={rangeStart}
                   totalDays={totalDays}
                   onDragEnd={handleDragEnd}
+                  onDropToBacklog={moveToBacklog}
+                  onBarDragActiveChange={setBarDragActive}
                   selectedId={selectedId}
                   onSelect={setSelectedId}
                   rollupsByCategory={rollupsByCategory}
                   allTasksById={allTasksById}
                 />
-              </Box>
+              </TimelineDropZone>
             </Box>
+            <BacklogPanel
+              items={backlogItems}
+              epics={epicOptions}
+              open={backlogOpen}
+              onToggle={() => setBacklogOpen((o) => !o)}
+              onCreate={createBacklogTask}
+              onSchedule={scheduleFromBacklog}
+              dropActive={barDragActive}
+            />
+            </Box>
+            </DndContext>
           )}
 
           {loading && (
@@ -1215,6 +1736,13 @@ export default function RoadmapTab({
           onAddDependency={handleAddDependency}
           onRemoveDependency={handleRemoveDependency}
           onSelectSubtask={setSelectedId}
+          onMoveToBacklog={
+            selectedRow.kind === "task" &&
+            selectedRow.scheduleStatus !== "unscheduled" &&
+            !tasks.some((t) => t.parentId === selectedRow.id)
+              ? () => moveToBacklog(selectedRow.id)
+              : undefined
+          }
         />
       )}
 
@@ -1223,6 +1751,35 @@ export default function RoadmapTab({
         onConfirm={confirmScheduleChange}
         onCancel={cancelScheduleChange}
       />
+
+      {/* Backlog-move confirmation — shown only when the task has dependencies,
+          which the move will remove (see the PATCH handler). */}
+      <Dialog open={pendingBacklogMove !== null} onClose={() => setPendingBacklogMove(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontSize: 15, fontWeight: 600 }}>Move to backlog?</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary" sx={{ fontSize: 13 }}>
+            “{pendingBacklogMove?.name}” is linked to other tasks. Moving it to the backlog clears
+            its dates and removes those dependencies. Undo restores the dates, but not the
+            dependencies.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, pb: 2.5 }}>
+          <Button onClick={() => setPendingBacklogMove(null)} sx={{ textTransform: "none" }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const task = pendingBacklogMove;
+              setPendingBacklogMove(null);
+              if (task) void performBacklogMove(task);
+            }}
+            sx={{ textTransform: "none" }}
+          >
+            Move to backlog
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Delete confirmation for paths that don't confirm inline (sidebar, list menu) */}
       <Dialog open={pendingDelete !== null} onClose={() => setPendingDelete(null)} maxWidth="xs" fullWidth>

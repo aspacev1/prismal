@@ -127,12 +127,16 @@ export default function TaskSidebar({
     return members.find((m) => m.id === task.assigneeId) ?? null;
   }
 
-  async function commitInlineAdd(parentId: string) {
+  // keepOpen (Enter) commits the name and leaves an empty input in place, so
+  // names can be typed back-to-back with only the keyboard — each committed
+  // task gets its ghost bar immediately via the parent's optimistic insert,
+  // which is also why this doesn't await: the input must clear right away.
+  function commitInlineAdd(parentId: string, keepOpen = false) {
     const name = inlineAddValue.trim();
     if (!name) { setInlineAddParentId(null); setInlineAddValue(""); return; }
-    await onAddChild(parentId, name);
-    setInlineAddParentId(null);
+    void onAddChild(parentId, name);
     setInlineAddValue("");
+    if (!keepOpen) setInlineAddParentId(null);
   }
 
   function handleAddChildClick(parentId: string) {
@@ -572,7 +576,7 @@ function SortableRow({
   inlineAddValue: string;
   setInlineAddValue: (v: string) => void;
   setInlineAddParentId: (v: string | null) => void;
-  commitInlineAdd: (parentId: string) => void;
+  commitInlineAdd: (parentId: string, keepOpen?: boolean) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
   childIds: string[];
   isExpanded: boolean;
@@ -861,7 +865,11 @@ function SortableRow({
         </IconButton>
       </Box>
 
-      {/* Inline add input */}
+      {/* Children rendered inside the SortableRow via children prop */}
+      {rest.children}
+
+      {/* Inline add input — after the children so committing with Enter reads
+          as "a new empty row below the task that was just created". */}
       {inlineAddParentId === row.id && (
         <Box
           sx={{
@@ -882,7 +890,7 @@ function SortableRow({
             value={inlineAddValue}
             onChange={(e) => setInlineAddValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(row.id); }
+              if (e.key === "Enter") { e.preventDefault(); commitInlineAdd(row.id, true); }
               if (e.key === "Escape") { setInlineAddParentId(null); setInlineAddValue(""); }
             }}
             onBlur={() => commitInlineAdd(row.id)}
@@ -891,9 +899,6 @@ function SortableRow({
           />
         </Box>
       )}
-
-      {/* Children rendered inside the SortableRow via children prop */}
-      {rest.children}
     </Box>
   );
 }

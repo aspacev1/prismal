@@ -17,6 +17,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineIcon from "@mui/icons-material/Delete";
 import CheckIcon from "@mui/icons-material/Check";
 import LinkIcon from "@mui/icons-material/Link";
+import MoveToInboxIcon from "@mui/icons-material/MoveToInbox";
 import {
   DETAIL_PANEL_WIDTH,
   STATUS_LIST,
@@ -57,6 +58,7 @@ export default function TaskDetailPanel({
   onAddDependency,
   onRemoveDependency,
   onSelectSubtask,
+  onMoveToBacklog,
 }: {
   row: TaskRow;
   members: MemberOption[];
@@ -69,6 +71,9 @@ export default function TaskDetailPanel({
   onAddDependency: (rowId: string, predecessorId: string) => Promise<void>;
   onRemoveDependency: (rowId: string, predecessorId: string) => void;
   onSelectSubtask: (id: string) => void;
+  // Present only when the task is eligible for the backlog (a task with no
+  // subtasks that isn't already unscheduled).
+  onMoveToBacklog?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"details" | "pulse">("details");
   const [depSelection, setDepSelection] = useState("");
@@ -386,6 +391,27 @@ export default function TaskDetailPanel({
               </Box>
             )}
 
+            {/* Estimated-dates notice — manual date entry below confirms them */}
+            {!isCategory && row.scheduleStatus === "estimated" && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  color: "#61779B",
+                  bgcolor: "rgba(97,119,155,0.08)",
+                  border: "1px dashed rgba(97,119,155,0.4)",
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
+                  fontSize: 11,
+                }}
+              >
+                ≈ Dates are estimated — drag the bar or save new dates to confirm them
+              </Typography>
+            )}
+
             {/* Start + Planned (not for categories) */}
             {!isCategory && (
               <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1 }}>
@@ -417,6 +443,20 @@ export default function TaskDetailPanel({
                     sx={{ "& .MuiOutlinedInput-root": { fontSize: 13 } }}
                   />
                 </Box>
+              </Box>
+            )}
+
+            {/* Park the task in the backlog — clears its dates */}
+            {!isCategory && onMoveToBacklog && (
+              <Box>
+                <Button
+                  size="small"
+                  startIcon={<MoveToInboxIcon sx={{ fontSize: 15 }} />}
+                  onClick={onMoveToBacklog}
+                  sx={{ textTransform: "none", fontSize: 12, color: "text.secondary", px: 1 }}
+                >
+                  Move to backlog
+                </Button>
               </Box>
             )}
 

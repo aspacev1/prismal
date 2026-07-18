@@ -92,6 +92,10 @@ model Task {
   name            String
   description     String?
   kind            String   @default("task")
+  // "estimated" (system-guessed dates, ghost bar) | "confirmed" (user-chosen
+  // dates) | "unscheduled" (parked in the backlog, no dates). Categories are
+  // always "confirmed" — their dates are rolled up from children.
+  scheduleStatus  String   @default("confirmed")
   startDate       DateTime?
   durationDays    Int      @default(1)
   originalEndDate DateTime?

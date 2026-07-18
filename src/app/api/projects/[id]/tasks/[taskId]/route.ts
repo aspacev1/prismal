@@ -33,7 +33,7 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { parentId, assigneeId, startDate, durationDays, confirmedDelay, reason, kind, ...rest } = parsed.data;
+  const { parentId, assigneeId, startDate, durationDays, confirmedDelay, reason, kind, scheduleStatus, ...rest } = parsed.data;
 
   if (parentId !== undefined) {
     if (parentId) {
@@ -91,13 +91,26 @@ export async function PATCH(
     }
   }
 
-  const resolvedStart = startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
-  const resolvedDuration = durationDays ?? existing.durationDays;
+  const movingToBacklog = scheduleStatus === "unscheduled";
+  const resolvedStart = movingToBacklog
+    ? null
+    : startDate !== undefined ? (startDate ? new Date(startDate) : null) : existing.startDate;
+  const resolvedDuration = movingToBacklog ? 0 : durationDays ?? existing.durationDays;
 
   // Schedule delay detection — only when the task has actual dates (planned tasks).
   // Unplanned tasks (null start or duration 0) skip delay detection.
-  const touchesSchedule = startDate !== undefined || durationDays !== undefined;
-  if (touchesSchedule && resolvedStart && resolvedDuration > 0) {
+  // Estimated schedules are exempt in both directions: confirming a ghost bar's
+  // guessed dates (or undoing back to a ghost) is the primary scheduling
+  // gesture and must not demand a delay confirmation or a reason. Scheduling a
+  // task out of the backlog (existing "unscheduled") is likewise a fresh
+  // scheduling decision, not a delay against a plan.
+  const exemptFromDelayGuard =
+    existing.scheduleStatus === "estimated" ||
+    existing.scheduleStatus === "unscheduled" ||
+    scheduleStatus === "estimated" ||
+    movingToBacklog;
+  const touchesSchedule = startDate !== undefined || durationDays !== undefined || movingToBacklog;
+  if (touchesSchedule && !exemptFromDelayGuard && resolvedStart && resolvedDuration > 0) {
     const newEnd = workEndDate(resolvedStart, resolvedDuration);
     const isDelay =
       existing.originalEndDate && daysBetween(new Date(existing.originalEndDate), newEnd) > 0;
@@ -129,6 +142,39 @@ export async function PATCH(
   if (parentId !== undefined) updateData.parentId = parentId || null;
   if (assigneeId !== undefined) updateData.assigneeId = assigneeId || null;
 
+  // Schedule-status transitions.
+  if (movingToBacklog) {
+    // Parking a task in the backlog clears its dates and its plan baseline.
+    updateData.scheduleStatus = "unscheduled";
+    updateData.startDate = null;
+    updateData.durationDays = 0;
+    updateData.originalEndDate = null;
+    updateData.originalDurationDays = 0;
+  } else if (scheduleStatus !== undefined) {
+    updateData.scheduleStatus = scheduleStatus;
+  } else if (
+    touchesSchedule &&
+    existing.scheduleStatus !== "confirmed" &&
+    resolvedStart &&
+    resolvedDuration > 0
+  ) {
+    // Dates were explicitly set on an estimated/unscheduled task without a
+    // status — that's a user scheduling decision, so it confirms the task.
+    updateData.scheduleStatus = "confirmed";
+  }
+  const finalScheduleStatus = (updateData.scheduleStatus as string | undefined) ?? existing.scheduleStatus;
+
+  if (finalScheduleStatus === "confirmed" && existing.scheduleStatus !== "confirmed" && resolvedStart && resolvedDuration > 0) {
+    // The task's dates just became user-confirmed — this is where its plan
+    // baseline starts (estimated ghosts carry none, see the POST handler).
+    updateData.originalEndDate = workEndDate(resolvedStart, resolvedDuration);
+    updateData.originalDurationDays = resolvedDuration;
+  } else if (finalScheduleStatus === "estimated" && existing.scheduleStatus !== "estimated") {
+    // Back to a ghost (undo) — drop the baseline again.
+    updateData.originalEndDate = null;
+    updateData.originalDurationDays = 0;
+  }
+
   // Build history entries
   const historyEntries: { field: string; oldValue: string | null; newValue: string | null; reason: string | null }[] = [];
   const scheduleReason = touchesSchedule ? (reason ?? null) : null;
@@ -140,7 +186,9 @@ export async function PATCH(
       newValue = updateData.name ?? existing.name;
     } else if (field === "startDate") {
       oldValue = existing.startDate;
-      newValue = updateData.startDate ?? existing.startDate;
+      // "in" check rather than ?? — clearing the date (backlog move) writes an
+      // explicit null that must be recorded as a change, not read as "absent".
+      newValue = "startDate" in updateData ? updateData.startDate : existing.startDate;
     } else if (field === "durationDays") {
       oldValue = existing.durationDays;
       newValue = updateData.durationDays ?? existing.durationDays;
@@ -186,6 +234,16 @@ export async function PATCH(
         reason: isScheduleField ? scheduleReason : null,
       });
     }
+  }
+
+  // A backlog task has no dates, so finish-to-start dependencies through it
+  // are meaningless — remove them in both directions. The client warns the
+  // user before requesting the move when dependencies exist. (Undoing the move
+  // restores the dates but not the removed dependencies.)
+  if (movingToBacklog) {
+    await prisma.taskDependency.deleteMany({
+      where: { OR: [{ predecessorId: params.taskId }, { successorId: params.taskId }] },
+    });
   }
 
   const task = await prisma.task.update({
