@@ -305,14 +305,25 @@ export default function RoadmapTab({
   // their scrollTop is mirrored here. The guard prevents the mirrored write
   // from echoing back into an infinite scroll loop.
   const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
-  const syncingScroll = useRef(false);
-  const syncScrollTop = useCallback((from: HTMLDivElement | null, to: HTMLDivElement | null) => {
-    if (!from || !to || syncingScroll.current) return;
-    syncingScroll.current = true;
+  // Names the pane whose *next* scroll event is an echo of a write we just
+  // made (not a new user gesture) and should be ignored. A time-based guard
+  // (e.g. "block for one animation frame") drops legitimate scroll events
+  // that arrive faster than the guard resets during a fast scroll gesture,
+  // which is exactly what caused the Gantt to visibly lag behind the sidebar
+  // and only "catch up" once scrolling stopped. This guard is cleared
+  // exactly once, by the specific echo event it predicts, so it never
+  // suppresses a real scroll delta.
+  const ignoreNextScrollOn = useRef<"sidebar" | "gantt" | null>(null);
+  const syncScrollTop = useCallback((source: "sidebar" | "gantt") => {
+    if (ignoreNextScrollOn.current === source) {
+      ignoreNextScrollOn.current = null;
+      return;
+    }
+    const from = source === "sidebar" ? sidebarScrollRef.current : scrollRef.current;
+    const to = source === "sidebar" ? scrollRef.current : sidebarScrollRef.current;
+    if (!from || !to) return;
+    ignoreNextScrollOn.current = source === "sidebar" ? "gantt" : "sidebar";
     to.scrollTop = from.scrollTop;
-    requestAnimationFrame(() => {
-      syncingScroll.current = false;
-    });
   }, []);
   // Guarded by a ref so it fires once per Gantt-view entry: `rangeStart` gets
   // a new identity every time tasks change, and re-running this after each
@@ -1088,7 +1099,7 @@ export default function RoadmapTab({
                 onReorder={handleReorder}
                 onReparent={handleReparent}
                 bodyRef={sidebarScrollRef}
-                onBodyScroll={() => syncScrollTop(sidebarScrollRef.current, scrollRef.current)}
+                onBodyScroll={() => syncScrollTop("sidebar")}
                 width={sidebarWidth}
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
@@ -1111,7 +1122,7 @@ export default function RoadmapTab({
               />
               <Box
                 ref={scrollRef}
-                onScroll={() => syncScrollTop(scrollRef.current, sidebarScrollRef.current)}
+                onScroll={() => syncScrollTop("gantt")}
                 sx={{ flex: 1, overflowX: "auto", overflowY: "auto" }}
               >
                 <GanttGrid
