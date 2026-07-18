@@ -281,7 +281,7 @@ export default function TaskDetailPanel({
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Typography fontWeight={600} color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: 0.5, fontSize: 12 }}>
-              {isCategory ? "Category" : row.isSubtask ? "Subtask" : "Task"}
+              {isCategory ? "Epic" : row.isSubtask ? "Subtask" : "Task"}
             </Typography>
             <Typography component="span" sx={{ fontSize: 10, color: "text.disabled", fontFamily: "monospace", bgcolor: "rgba(0,0,0,0.04)", px: 0.5, py: 0.15, borderRadius: 0.5 }}>
               #{row.id.slice(-6)}
@@ -696,10 +696,10 @@ export default function TaskDetailPanel({
 
       {/* Delete confirmation */}
       <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontSize: 15, fontWeight: 600 }}>Delete this {isCategory ? "category" : row.isSubtask ? "subtask" : "task"}?</DialogTitle>
+        <DialogTitle sx={{ fontSize: 15, fontWeight: 600 }}>Delete this {isCategory ? "epic" : row.isSubtask ? "subtask" : "task"}?</DialogTitle>
         <DialogContent>
           <Typography color="text.secondary" sx={{ fontSize: 13 }}>
-            {isCategory ? "This category and all its tasks and subtasks will be permanently deleted." : "This task and all its subtasks will be permanently deleted."}
+            {isCategory ? "This epic and all its tasks and subtasks will be permanently deleted." : "This task and all its subtasks will be permanently deleted."}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 2.5, pb: 2.5 }}>

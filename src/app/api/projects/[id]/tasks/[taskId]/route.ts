@@ -77,7 +77,7 @@ export async function PATCH(
   // A Category cannot be given a parentId.
   if (kind === "category" && parentId) {
     return NextResponse.json(
-      { error: "A category cannot be nested under another task." },
+      { error: "An epic cannot be nested under another task." },
       { status: 400 }
     );
   }

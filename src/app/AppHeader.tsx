@@ -86,7 +86,7 @@ export default function AppHeader({
         {projectName && projectId && (
           <Button
             component={Link}
-            href={`/projects/${projectId}/start`}
+            href={`/projects/${projectId}`}
             sx={{
               ml: 1,
               color: isActive(`/projects/${projectId}`) ? "primary.main" : "text.secondary",

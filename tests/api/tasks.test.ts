@@ -61,15 +61,21 @@ describe("Task kind + 3-level cap", () => {
     expect(list.tasks[0].kind).toBe("category");
   });
 
-  it("creates a task with default kind 'task'", async () => {
+  it("creates a task with default kind 'task' under an epic", async () => {
     const { project } = await makeOnboardedUserAndProject("kind-default@acme-corp.com", "P2");
     const url = `http://localhost:3000/api/projects/${project.id}/tasks`;
-    const res = await createTask(makeRequest(url, "POST", { name: "Plain task" }), {
+    const epicRes = await createTask(makeRequest(url, "POST", { name: "Epic", kind: "category" }), {
+      params: { id: project.id },
+    });
+    const epic = (await epicRes.json()).task;
+
+    const res = await createTask(makeRequest(url, "POST", { name: "Plain task", parentId: epic.id }), {
       params: { id: project.id },
     });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.task.kind).toBe("task");
+    expect(body.task.parentId).toBe(epic.id);
   });
 
   it("allows a task under a category (2nd level)", async () => {
@@ -152,7 +158,12 @@ describe("Task kind + 3-level cap", () => {
   it("patches kind on an existing task", async () => {
     const { project } = await makeOnboardedUserAndProject("patch-kind@acme-corp.com", "P7");
     const url = `http://localhost:3000/api/projects/${project.id}/tasks`;
-    const taskRes = await createTask(makeRequest(url, "POST", { name: "T" }), {
+    const epicRes = await createTask(makeRequest(url, "POST", { name: "Epic", kind: "category" }), {
+      params: { id: project.id },
+    });
+    const epic = (await epicRes.json()).task;
+
+    const taskRes = await createTask(makeRequest(url, "POST", { name: "T", parentId: epic.id }), {
       params: { id: project.id },
     });
     const task = (await taskRes.json()).task;
@@ -164,5 +175,17 @@ describe("Task kind + 3-level cap", () => {
     expect(patchRes.status).toBe(200);
     const body = await patchRes.json();
     expect(body.task.kind).toBe("category");
+  });
+
+  it("rejects a task without a parentId (root-level tasks are not allowed)", async () => {
+    const { project } = await makeOnboardedUserAndProject("root-task@acme-corp.com", "P8");
+    const url = `http://localhost:3000/api/projects/${project.id}/tasks`;
+    const res = await createTask(
+      makeRequest(url, "POST", { name: "Root task", kind: "task" }),
+      { params: { id: project.id } }
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/must be created under an epic/i);
   });
 });

@@ -27,14 +27,21 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import ViewListIcon from "@mui/icons-material/ViewList";
-import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import TaskSidebar from "./gantt/TaskSidebar";
 import GanttGrid from "./gantt/GanttGrid";
 import TaskDetailPanel from "./gantt/TaskDetailPanel";
 import ScheduleChangeDialog, { type ScheduleChangeData } from "./gantt/ScheduleChangeDialog";
-import { STATUS_LIST, STATUSES, isStatus, type TaskStatus, DAY_WIDTH } from "./gantt/constants";
+import {
+  STATUSES,
+  isStatus,
+  type TaskStatus,
+  DAY_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+} from "./gantt/constants";
 import { StatusDot } from "./gantt/shared";
 import { rollupChildren } from "./gantt/rollups";
 import type { TaskRow, MemberOption, TaskKind, TaskDraft } from "./gantt/types";
@@ -61,7 +68,6 @@ type ApiTask = {
   priority: string;
   order: number;
   color: string | null;
-  isMilestone: boolean;
   projectId: string;
   parentId: string | null;
   assigneeId: string | null;
@@ -78,6 +84,22 @@ type ApiTask = {
   deps: { predecessorId: string }[];
   successorDeps: { id: string }[];
 };
+
+// Shape of the task returned by POST /tasks: raw Prisma includes rather than
+// the mapped shape GET returns (`predecessorDeps` instead of `deps`).
+type CreatedApiTask = Omit<ApiTask, "deps" | "successorDeps"> & {
+  predecessorDeps: { predecessorId: string }[];
+  successorDeps: { id: string }[];
+};
+
+function toApiTask(t: CreatedApiTask): ApiTask {
+  const { predecessorDeps, successorDeps, ...rest } = t;
+  return {
+    ...rest,
+    deps: predecessorDeps.map((d) => ({ predecessorId: d.predecessorId })),
+    successorDeps: successorDeps.map((s) => ({ id: s.id })),
+  };
+}
 
 type PendingScheduleChange = ScheduleChangeData | null;
 
@@ -110,8 +132,54 @@ export default function RoadmapTab({
   // drag, failed schedule-change save).
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Resizable / collapsible sidebar state
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+    const saved = localStorage.getItem("roadmap.sidebarWidth");
+    return saved ? Number(saved) : SIDEBAR_DEFAULT_WIDTH;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("roadmap.sidebarCollapsed") === "true";
+  });
+
+  const handleSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarCollapsed ? SIDEBAR_DEFAULT_WIDTH : sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      const newWidth = Math.max(
+        SIDEBAR_MIN_WIDTH,
+        Math.min(SIDEBAR_MAX_WIDTH, startWidth + delta)
+      );
+      setSidebarWidth(newWidth);
+      if (sidebarCollapsed) setSidebarCollapsed(false);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth, sidebarCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem("roadmap.sidebarCollapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem("roadmap.sidebarWidth", String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  // Only the very first load blocks the UI behind the "Loading tasks..."
+  // state. Refetches after mutations run in the background: tearing the whole
+  // Gantt down and remounting it on every create/save read as a full page
+  // reload (loading flash + scroll reset).
+  const hasLoadedRef = useRef(false);
   const fetchTasks = useCallback(async () => {
-    setLoading(true);
+    const isInitialLoad = !hasLoadedRef.current;
+    if (isInitialLoad) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/tasks`, { credentials: "same-origin" });
@@ -122,10 +190,11 @@ export default function RoadmapTab({
       }
       const body = await res.json();
       setTasks(body.tasks);
+      hasLoadedRef.current = true;
     } catch {
       setError("Network error.");
     } finally {
-      setLoading(false);
+      if (isInitialLoad) setLoading(false);
     }
   }, [projectId]);
 
@@ -143,9 +212,7 @@ export default function RoadmapTab({
     setExpanded((prev) => {
       const next = new Set(prev);
       for (const t of tasks) {
-        if (!t.parentId && tasks.some((x) => x.parentId === t.id)) {
-          next.add(t.id);
-        }
+        if (tasks.some((x) => x.parentId === t.id)) next.add(t.id);
       }
       return next;
     });
@@ -216,7 +283,7 @@ export default function RoadmapTab({
       ? addDays(new Date(projectStartDate), -1)
       : addDays(today, -7);
     let maxEnd: Date | null = null;
-    for (const t of effectiveTasks) {
+    for (const t of tasks) {
       if (t.startDate) {
         const end = workEndDate(new Date(t.startDate), t.durationDays);
         if (!maxEnd || end > maxEnd) maxEnd = end;
@@ -225,7 +292,7 @@ export default function RoadmapTab({
     const end = maxEnd ? addDays(maxEnd, 14) : addDays(today, 21);
     const days = Math.max(daysBetween(start, end), 28);
     return { rangeStart: start, totalDays: days };
-  }, [projectStartDate, effectiveTasks]);
+  }, [projectStartDate, tasks]);
 
   // Auto-scroll the Gantt so "today" is visible ~1 week from the left edge
   // on initial load (or when switching to the Gantt view). This prevents the
@@ -258,12 +325,19 @@ export default function RoadmapTab({
     ignoreNextScrollOn.current = source === "sidebar" ? "gantt" : "sidebar";
     to.scrollTop = from.scrollTop;
   }, []);
+  // Guarded by a ref so it fires once per Gantt-view entry: `rangeStart` gets
+  // a new identity every time tasks change, and re-running this after each
+  // mutation would yank the user's horizontal scroll back to "today".
+  const didAutoScrollRef = useRef(false);
   useEffect(() => {
-    if (scrollRef.current && view === "gantt" && !loading) {
-      const todayOffsetPx = daysBetween(rangeStart, getToday()) * DAY_WIDTH;
-      scrollRef.current.scrollLeft = Math.max(todayOffsetPx - DAY_WIDTH, 0);
+    if (view !== "gantt") {
+      didAutoScrollRef.current = false;
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (loading || didAutoScrollRef.current || !scrollRef.current) return;
+    didAutoScrollRef.current = true;
+    const todayOffsetPx = daysBetween(rangeStart, getToday()) * DAY_WIDTH;
+    scrollRef.current.scrollLeft = Math.max(todayOffsetPx - DAY_WIDTH, 0);
   }, [view, loading, rangeStart]);
 
   function toggleExpand(taskId: string) {
@@ -273,6 +347,21 @@ export default function RoadmapTab({
       else next.add(taskId);
       return next;
     });
+  }
+
+  function collapseAllEpics() {
+    setExpanded((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        const t = tasks.find((t) => t.id === id);
+        if (t && t.kind !== "category") next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function restoreExpanded(saved: Set<string>) {
+    setExpanded(saved);
   }
 
   // PATCH a task; returns { ok } or { needsConfirm, body }
@@ -652,65 +741,70 @@ export default function RoadmapTab({
     });
     if (res.ok) {
       const data = await res.json();
+      // Insert the created task directly — the POST response is the server
+      // row, so no refetch is needed and the row appears without a reload.
+      setTasks((prev) => [...prev, toApiTask(data.task)]);
       setSelectedId(data.task.id);
-      fetchTasks();
     }
-  }, [projectId, members, fetchTasks]);
-
-  const addCategory = useCallback(async () => {
-    const res = await fetch(`/api/projects/${projectId}/tasks`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({
-        name: "New category",
-        kind: "category",
-        status: "todo",
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setTasks((prev) => [...prev, { ...data.task, deps: [] }]);
-      setSelectedId(data.task.id);
-      fetchTasks();
-    }
-  }, [projectId, fetchTasks]);
+  }, [projectId, members]);
 
   // Create a child (Task under a Category, or Subtask under a Task).
   // Used by the hover-"+" inline add. The parent's kind determines the
   // semantic level of the new row but the API just needs parentId + kind=task.
   const createChild = useCallback(
     async (parentId: string, name: string): Promise<{ ok: boolean }> => {
-      const parent = tasks.find((t) => t.id === parentId);
-      if (!parent) return { ok: false };
       const firstMember = members[0];
+      const body = {
+        name: name.trim(),
+        kind: "task" as const,
+        startDate: getToday().toISOString(),
+        durationDays: 0,
+        status: "todo" as const,
+        priority: "low" as const,
+        parentId,
+        assigneeId: firstMember?.id ?? null,
+      };
+      const res = await fetch(`/api/projects/${projectId}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          next.add(parentId);
+          return next;
+        });
+        return { ok: true };
+      }
+      return { ok: false };
+    },
+    [projectId, members]
+  );
+
+  const createEpic = useCallback(
+    async (name: string): Promise<{ ok: boolean }> => {
       const res = await fetch(`/api/projects/${projectId}/tasks`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
           name: name.trim(),
-          kind: "task",
-          startDate: null,
-          durationDays: 0,
+          kind: "category",
           status: "todo",
-          priority: "low",
-          parentId,
-          assigneeId: firstMember?.id ?? null,
         }),
       });
       if (res.ok) {
-        setExpanded((prev) => {
-          const next = new Set(prev);
-          next.add(parentId);
-          return next;
-        });
-        fetchTasks();
+        const data = await res.json();
+        setTasks((prev) => [...prev, toApiTask(data.task)]);
         return { ok: true };
       }
       return { ok: false };
     },
-    [tasks, projectId, members, fetchTasks]
+    [projectId]
   );
 
   const childCounts = useMemo(() => {
@@ -960,60 +1054,35 @@ export default function RoadmapTab({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Card sx={{ boxShadow: "0 4px 16px rgba(0,0,0,0.06)", border: "1px solid rgba(0,0,0,0.06)" }}>
-        <CardContent sx={{ p: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 4 }}>
+        <CardContent sx={{ p: view === "gantt" && !loading ? 0 : 4 }}>
           <Box
             sx={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
-              mb: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 3,
-              px: view === "gantt" && !loading && rootTasks.length > 0 ? 0 : 0,
+              justifyContent: "flex-end",
+              mb: view === "gantt" && !loading ? 0 : 3,
+              px: view === "gantt" && !loading ? 0 : 0,
             }}
           >
-            <Typography variant="h6" fontWeight={700}>
-              Tasks
-            </Typography>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-              <ToggleButtonGroup
-                value={view}
-                exclusive
-                size="small"
-                color="primary"
-                onChange={(_, next) => { if (next) setView(next); }}
-              >
-                <ToggleButton value="gantt">
-                  <CalendarMonthIcon sx={{ mr: 0.5, fontSize: 18 }} />
-                  Gantt
-                </ToggleButton>
-                <ToggleButton value="list">
-                  <ViewListIcon sx={{ mr: 0.5, fontSize: 18 }} />
-                  List
-                </ToggleButton>
-              </ToggleButtonGroup>
-              {view === "gantt" && (
-                <ToggleButton
-                  value="dependent"
-                  size="small"
-                  color="primary"
-                  selected={onlyDependent}
-                  onChange={() => setOnlyDependent((v) => !v)}
-                  sx={{ textTransform: "none", px: 1.5 }}
-                  title="Show only tasks that have dependencies"
-                >
-                  <FilterAltIcon sx={{ fontSize: 16, mr: 0.5 }} />
-                  Dependent only
-                </ToggleButton>
-              )}
-              <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={addCategory}>
-                Category
-              </Button>
-              <Button variant="contained" size="small" startIcon={<AddIcon />} onClick={addTask}>
-                Task
-              </Button>
-            </Box>
+            <ToggleButtonGroup
+              value={view}
+              exclusive
+              size="small"
+              color="primary"
+              onChange={(_, next) => { if (next) setView(next); }}
+            >
+              <ToggleButton value="gantt">
+                <CalendarMonthIcon sx={{ mr: 0.5, fontSize: 18 }} />
+                Gantt
+              </ToggleButton>
+              <ToggleButton value="list">
+                <ViewListIcon sx={{ mr: 0.5, fontSize: 18 }} />
+                List
+              </ToggleButton>
+            </ToggleButtonGroup>
           </Box>
 
-          {view === "gantt" && !loading && rootTasks.length > 0 && (
+          {view === "gantt" && !loading && (
             <Box sx={{ display: "flex", height: 640, overflow: "hidden", borderRadius: 1 }}>
               <TaskSidebar
                 rows={rows}
@@ -1025,11 +1094,31 @@ export default function RoadmapTab({
                 onToggleExpand={toggleExpand}
                 childCounts={childCounts}
                 onAddChild={createChild}
+                onAddEpic={createEpic}
                 rollupsByCategory={rollupsByCategory}
                 onReorder={handleReorder}
                 onReparent={handleReparent}
                 bodyRef={sidebarScrollRef}
                 onBodyScroll={() => syncScrollTop("sidebar")}
+                width={sidebarWidth}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
+                onCollapseAllEpics={collapseAllEpics}
+                onRestoreExpanded={restoreExpanded}
+              />
+              <Box
+                onMouseDown={handleSidebarResize}
+                sx={{
+                  width: 4,
+                  flexShrink: 0,
+                  cursor: "col-resize",
+                  bgcolor: "divider",
+                  transition: "background-color 0.15s",
+                  position: "relative",
+                  zIndex: 10,
+                  "&:hover": { bgcolor: "primary.main" },
+                  "&:active": { bgcolor: "primary.dark" },
+                }}
               />
               <Box
                 ref={scrollRef}
@@ -1063,21 +1152,7 @@ export default function RoadmapTab({
             </Typography>
           )}
 
-          {!loading && !error && rootTasks.length === 0 && tasks.length > 0 && onlyDependent && (
-            <Box sx={{ textAlign: "center", py: 6 }}>
-              <Typography variant="body1" color="text.secondary" gutterBottom>
-                No dependent tasks
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                No tasks have dependencies yet. Turn off &ldquo;Dependent only&rdquo; to see all tasks.
-              </Typography>
-              <Button variant="outlined" size="small" onClick={() => setOnlyDependent(false)}>
-                Show all tasks
-              </Button>
-            </Box>
-          )}
-
-          {!loading && !error && rootTasks.length === 0 && !(tasks.length > 0 && onlyDependent) && (
+          {!loading && !error && view === "list" && rootTasks.length === 0 && (
             <Box sx={{ textAlign: "center", py: 6 }}>
               <Typography variant="body1" color="text.secondary" gutterBottom>
                 No tasks yet
@@ -1127,17 +1202,6 @@ export default function RoadmapTab({
           )}
         </CardContent>
       </Card>
-
-      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={handleCloseMenu}>
-        <MenuItem onClick={() => { if (menuTask) setSelectedId(menuTask.id); handleCloseMenu(); }} dense>
-          <EditIcon sx={{ mr: 1, fontSize: 18 }} />
-          Edit
-        </MenuItem>
-        <MenuItem onClick={handleDeleteFromList} dense>
-          <DeleteIcon sx={{ mr: 1, fontSize: 18 }} />
-          Delete
-        </MenuItem>
-      </Menu>
 
       {selectedRow && (
         <TaskDetailPanel

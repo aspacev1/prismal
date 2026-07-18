@@ -49,7 +49,6 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     priority: t.priority,
     order: t.order,
     color: t.color,
-    isMilestone: t.isMilestone,
     projectId: t.projectId,
     parentId: t.parentId,
     assigneeId: t.assigneeId,
@@ -116,7 +115,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   // A Category cannot have a parentId (categories are top-level only).
   if (kind === "category" && parentId) {
     return NextResponse.json(
-      { error: "A category cannot be nested under another task." },
+      { error: "An epic cannot be nested under another task." },
+      { status: 400 }
+    );
+  }
+
+  // Every task must be mapped to an epic. Tasks (non-categories) require a parentId.
+  if (kind !== "category" && !parentId) {
+    return NextResponse.json(
+      { error: "Every task must be created under an epic." },
       { status: 400 }
     );
   }
